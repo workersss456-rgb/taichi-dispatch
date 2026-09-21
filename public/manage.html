@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>人員與案場管理｜太綺派工通</title>
+<style>
+  :root { --navy:#0f172a; --blue:#2563eb; --amber:#f59e0b; --red:#dc2626; --green:#059669;
+          --text:#1e293b; --sub:#64748b; --faint:#94a3b8; --border:#e2e8f0; --bg:#f1f5f9; --card:#fff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-size:14px; line-height:1.5;
+         font-family:"Noto Sans TC","Microsoft JhengHei",-apple-system,sans-serif; -webkit-tap-highlight-color:transparent; }
+  header { background:var(--navy); color:#fff; padding:12px 16px; position:sticky; top:0; z-index:20;
+           display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  header .brand { display:flex; align-items:center; gap:8px; font-weight:700; }
+  header .brand b { background:var(--blue); padding:2px 8px; border-radius:6px; font-size:13px; }
+  header a { color:#cbd5e1; font-size:13px; text-decoration:none; }
+  nav { display:flex; background:#fff; border-bottom:1px solid var(--border); position:sticky; top:52px; z-index:19; overflow-x:auto; }
+  nav button { flex:1; min-width:84px; padding:12px 8px; border:none; background:none; font:inherit; color:var(--sub);
+               border-bottom:2px solid transparent; cursor:pointer; white-space:nowrap; }
+  nav button.active { color:var(--blue); border-color:var(--blue); font-weight:700; }
+  main { max-width:900px; margin:0 auto; padding:14px 12px 80px; }
+  .panel { display:none; } .panel.active { display:block; }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  .toolbar input, .toolbar select { flex:1; min-width:120px; }
+  input, select, textarea { width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:8px;
+                             font:inherit; font-size:16px; background:#fff; color:var(--text); }
+  .btn { border:none; border-radius:8px; padding:9px 14px; font:inherit; font-weight:600; cursor:pointer; white-space:nowrap; }
+  .btn-primary { background:var(--blue); color:#fff; }
+  .btn-ghost { background:#fff; border:1px solid var(--border); color:var(--text); }
+  .btn-danger { background:#fff; border:1px solid #fecaca; color:var(--red); }
+  .btn-sm { padding:6px 10px; font-size:13px; }
+  .filters { display:flex; gap:6px; overflow-x:auto; margin-bottom:10px; }
+  .chip { border:1px solid var(--border); background:#fff; border-radius:999px; padding:5px 12px; font-size:13px;
+          cursor:pointer; white-space:nowrap; color:var(--sub); }
+  .chip.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:10px; }
+  .person { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+  .person .name { font-weight:700; font-size:15px; }
+  .meta { color:var(--sub); font-size:12.5px; margin-top:2px; }
+  .tag { display:inline-block; font-size:11.5px; padding:1px 8px; border-radius:999px; margin-left:6px; border:1px solid var(--border); vertical-align:1px; }
+  .tag.manager { background:#dbeafe; color:#1d4ed8; border-color:#bfdbfe; }
+  .tag.admin { background:#fef3c7; color:#92400e; border-color:#fde68a; }
+  .tag.left { background:#f1f5f9; color:var(--faint); }
+  .tag.upcoming { background:#dcfce7; color:#166534; border-color:#bbf7d0; }
+  .tag.off-roster { background:#f5f3ff; color:#6d28d9; border-color:#ddd6fe; }
+  .actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+  .group-block { margin-bottom:16px; }
+  .group-title { font-weight:700; font-size:13px; color:var(--sub); margin:14px 2px 6px; display:flex; justify-content:space-between; }
+  .empty { text-align:center; color:var(--faint); padding:30px 10px; }
+  .modal-bg { position:fixed; inset:0; background:rgba(15,23,42,.5); display:none; align-items:flex-end; justify-content:center; z-index:50; }
+  .modal-bg.show { display:flex; }
+  .modal { background:#fff; width:100%; max-width:480px; border-radius:16px 16px 0 0; padding:18px 16px 24px; max-height:90vh; overflow-y:auto; }
+  @media (min-width:640px) { .modal-bg { align-items:center; } .modal { border-radius:16px; } }
+  .modal h3 { margin:0 0 12px; font-size:17px; }
+  .field { margin-bottom:10px; }
+  .field label { display:block; font-size:12.5px; color:var(--sub); margin-bottom:4px; }
+  .field .hint { font-size:12px; color:var(--faint); margin-top:3px; }
+  .check { display:flex; align-items:center; gap:8px; font-size:14px; margin:8px 0; }
+  .check input { width:auto; }
+  .modal-actions { display:flex; gap:8px; margin-top:14px; }
+  .modal-actions .btn { flex:1; }
+  .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#111827; color:#fff; padding:10px 16px;
+           border-radius:10px; font-size:14px; z-index:60; max-width:90vw; }
+  .toast.err { background:var(--red); } .toast.ok { background:var(--green); }
+  .log { font-size:13px; padding:8px 0; border-bottom:1px dashed var(--border); }
+  .log b { color:var(--text); } .log span { color:var(--faint); font-size:12px; }
+  .gate { max-width:360px; margin:60px auto; text-align:center; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><b>太綺</b>人員與案場管理</div>
+  <a href="index.html">← 回派工</a>
+</header>
+
+<div id="gate" class="gate" style="display:none;">
+  <h3>需要管理者權限</h3>
+  <p class="meta" id="gate-msg">這一頁只有總經理與人資可以使用。</p>
+  <button class="btn btn-primary" id="gate-login">以手機號碼登入</button>
+</div>
+
+<div id="app" style="display:none;">
+  <nav>
+    <button class="active" data-panel="people">人員</button>
+    <button data-panel="groups">組別</button>
+    <button data-panel="sites">案場</button>
+    <button data-panel="logs">操作紀錄</button>
+  </nav>
+
+  <main>
+    <!-- ---------- 人員 ---------- -->
+    <section class="panel active" id="panel-people">
+      <div class="toolbar">
+        <input type="search" id="people-search" placeholder="搜尋姓名或手機">
+        <button class="btn btn-primary" id="add-person">＋ 新增人員</button>
+      </div>
+      <div class="filters" id="people-filters">
+        <button class="chip active" data-f="active">在職</button>
+        <button class="chip" data-f="upcoming">即將到職</button>
+        <button class="chip" data-f="left">已離職</button>
+        <button class="chip" data-f="all">全部</button>
+      </div>
+      <div id="people-list"></div>
+    </section>
+
+    <!-- ---------- 組別 ---------- -->
+    <section class="panel" id="panel-groups">
+      <div class="toolbar"><span class="meta" style="flex:1;">換主管時，新主管會自動併入該組並取得主管權限。</span>
+        <button class="btn btn-primary" id="add-group">＋ 新增組別</button></div>
+      <div id="groups-list"></div>
+    </section>
+
+    <!-- ---------- 案場 ---------- -->
+    <section class="panel" id="panel-sites">
+      <div class="toolbar"><span class="meta" style="flex:1;">案場結束請按「結案」，歷史紀錄會保留，但派工下拉不再出現。</span>
+        <button class="btn btn-primary" id="add-site">＋ 新增案場</button></div>
+      <div id="sites-list"></div>
+    </section>
+
+    <!-- ---------- 紀錄 ---------- -->
+    <section class="panel" id="panel-logs">
+      <div class="card" id="logs-list"></div>
+    </section>
+  </main>
+</div>
+
+<!-- 人員表單 -->
+<div class="modal-bg" id="person-modal">
+  <div class="modal">
+    <h3 id="pm-title">新增人員</h3>
+    <input type="hidden" id="pm-id">
+    <div class="field"><label>姓名</label><input id="pm-name"></div>
+    <div class="field"><label>職稱（選填）</label><input id="pm-title-input" placeholder="例：技術員、副主任"></div>
+    <label class="check"><input type="checkbox" id="pm-roster" checked> 列入派工與排休名冊</label>
+    <div class="field hint" style="margin-top:-6px;">人資、行政這類不會被派到案場的人，請取消勾選。</div>
+    <div class="field" id="pm-group-field"><label>所屬組別</label><select id="pm-group"></select></div>
+    <div class="field"><label>到職日</label><input type="date" id="pm-hire">
+      <div class="hint">到職日之前不會出現在派工名單；留空＝立即生效。</div></div>
+    <div class="field"><label>手機（登入用，選填）</label><input type="tel" id="pm-phone" inputmode="numeric" placeholder="0912345678"></div>
+    <div class="field"><label>系統權限</label>
+      <select id="pm-role">
+        <option value="member">組員（有手機時可編輯自己組別）</option>
+        <option value="manager">主管（編輯自己組別）</option>
+        <option value="admin">管理者（全部組別＋人員管理）</option>
+      </select></div>
+    <div class="field"><label>備註（選填）</label><input id="pm-note"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="pm-save">儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 離職表單 -->
+<div class="modal-bg" id="leave-modal">
+  <div class="modal">
+    <h3>設定離職</h3>
+    <p class="meta" id="lm-summary"></p>
+    <input type="hidden" id="lm-id">
+    <div class="field"><label>離職日（當天起不再排班）</label><input type="date" id="lm-date"></div>
+    <label class="check"><input type="checkbox" id="lm-clear-phone" checked> 同時清除手機，停用登入</label>
+    <p class="meta">離職日之後已經排好的派工與排休會一併清除；離職日之前的歷史紀錄全部保留。</p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="lm-save" style="background:var(--red);">確認離職</button>
+    </div>
+  </div>
+</div>
+
+<!-- 組別表單 -->
+<div class="modal-bg" id="group-modal">
+  <div class="modal">
+    <h3 id="gm-title">新增組別</h3>
+    <input type="hidden" id="gm-id">
+    <div class="field"><label>組別名稱</label><input id="gm-name" placeholder="例：志軒組"></div>
+    <div class="field"><label>主管</label><select id="gm-manager"></select></div>
+    <div class="field"><label>主管職稱</label><input id="gm-mtitle" placeholder="例：副主任"></div>
+    <label class="check" id="gm-active-row" style="display:none;"><input type="checkbox" id="gm-active" checked> 組別使用中</label>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="gm-save">儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 案場表單 -->
+<div class="modal-bg" id="site-modal">
+  <div class="modal">
+    <h3 id="sm-title">新增案場</h3>
+    <input type="hidden" id="sm-id">
+    <div class="field"><label>案場名稱</label><input id="sm-name"></div>
+    <div class="field"><label>負責組別</label><select id="sm-group"></select></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="sm-save">儲存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const ROLE_TEXT = { member: '組員', manager: '主管', admin: '管理者' };
+let me = JSON.parse(localStorage.getItem('TK_CURRENT_USER') || 'null');
+let data = { employees: [], groups: [], sites: [] };
+let peopleFilter = 'active';
+
+async function api(method, path, body) {
+  const opt = { method, headers: { 'Content-Type': 'application/json' } };
+  if (method === 'GET') path += (path.includes('?') ? '&' : '?') + 'phone=' + encodeURIComponent(me ? me.phone : '');
+  else opt.body = JSON.stringify({ ...(body || {}), phone: me ? me.phone : '' });
+  const res = await fetch(path, opt);
+  let d = null; try { d = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error((d && (d.message || d.error)) || `伺服器錯誤（${res.status}）`);
+  return d;
+}
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+function toast(msg, type) {
+  const el = document.createElement('div'); el.className = 'toast ' + (type || ''); el.textContent = msg;
+  document.body.appendChild(el); setTimeout(() => el.remove(), 2800);
+}
+function today() { return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' }); }
+function groupName(id) { const g = data.groups.find(x => x.id === id); return g ? g.name : '（未分組）'; }
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModals() { document.querySelectorAll('.modal-bg').forEach(m => m.classList.remove('show')); }
+document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', closeModals));
+document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', e => { if (e.target === m) closeModals(); }));
+
+// ---------- 登入 ----------
+async function login() {
+  const phone = prompt('請輸入管理者的手機號碼：', (me && me.phone) || '');
+  if (!phone) return;
+  try {
+    const r = await api('POST', '/api/auth/lookup', { phone });
+    if (!r.found) return toast('查不到這組手機', 'err');
+    me = { ...r.user, phone: phone.replace(/[^0-9]/g, '') };
+    localStorage.setItem('TK_CURRENT_USER', JSON.stringify(me));
+    start();
+  } catch (err) { toast(err.message, 'err'); }
+}
+document.getElementById('gate-login').addEventListener('click', login);
+
+async function start() {
+  if (!me || me.role !== 'admin') {
+    document.getElementById('gate').style.display = '';
+    document.getElementById('app').style.display = 'none';
+    if (me) document.getElementById('gate-msg').textContent = `${me.name} 目前是「${ROLE_TEXT[me.role]}」權限，這一頁只有管理者可以使用。`;
+    return;
+  }
+  document.getElementById('gate').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  await reload();
+}
+
+async function reload() {
+  try {
+    data = await api('GET', '/api/admin/people');
+    renderPeople(); renderGroups(); renderSites();
+  } catch (err) { toast(err.message, 'err'); }
+}
+
+// ---------- 頁籤 ----------
+document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + b.dataset.panel));
+  if (b.dataset.panel === 'logs') loadLogs();
+}));
+
+// ---------- 人員 ----------
+document.querySelectorAll('#people-filters .chip').forEach(c => c.addEventListener('click', () => {
+  peopleFilter = c.dataset.f;
+  document.querySelectorAll('#people-filters .chip').forEach(x => x.classList.toggle('active', x === c));
+  renderPeople();
+}));
+document.getElementById('people-search').addEventListener('input', renderPeople);
+
+function renderPeople() {
+  const q = document.getElementById('people-search').value.trim();
+  const list = data.employees.filter(e => e.state !== 'deleted')
+    .filter(e => peopleFilter === 'all' || e.state === peopleFilter)
+    .filter(e => !q || e.name.includes(q) || (e.phone || '').includes(q));
+
+  const box = document.getElementById('people-list');
+  if (!list.length) { box.innerHTML = '<div class="empty">沒有符合的人員</div>'; return; }
+
+  // 依組別分組顯示，不排班的人員放最後
+  const buckets = {};
+  list.forEach(e => {
+    const key = e.in_roster === false ? '__off' : (e.group_id || '__none');
+    (buckets[key] = buckets[key] || []).push(e);
+  });
+  const order = data.groups.map(g => g.id).concat(['__none', '__off']);
+  box.innerHTML = order.filter(k => buckets[k]).map(k => `
+    <div class="group-block">
+      <div class="group-title"><span>${k === '__off' ? '不列入派工（人資／行政）' : k === '__none' ? '尚未分組' : esc(groupName(k))}</span><span>${buckets[k].length} 人</span></div>
+      ${buckets[k].map(personCard).join('')}
+    </div>`).join('');
+
+  box.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => openPerson(+b.dataset.edit)));
+  box.querySelectorAll('[data-leave]').forEach(b => b.addEventListener('click', () => openLeave(+b.dataset.leave)));
+  box.querySelectorAll('[data-rehire]').forEach(b => b.addEventListener('click', () => rehire(+b.dataset.rehire)));
+  box.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => removePerson(+b.dataset.del)));
+}
+
+function personCard(e) {
+  const isManager = data.groups.some(g => g.manager_name === e.name);
+  const tags = [
+    isManager ? '<span class="tag manager">主管</span>' : '',
+    e.role === 'admin' ? '<span class="tag admin">管理者</span>' : '',
+    e.state === 'left' ? `<span class="tag left">已離職 ${esc(e.leave_date)}</span>` : '',
+    e.state === 'upcoming' ? `<span class="tag upcoming">${esc(e.hire_date)} 到職</span>` : '',
+    e.state === 'active' && e.leave_date ? `<span class="tag left">預計 ${esc(e.leave_date)} 離職</span>` : '',
+  ].join('');
+  const meta = [e.title, e.phone ? `📱 ${e.phone}` : '未設手機', e.hire_date && e.state !== 'upcoming' ? `到職 ${e.hire_date}` : '']
+    .filter(Boolean).join('　');
+  return `<div class="card person">
+    <div><div class="name">${esc(e.name)}${tags}</div><div class="meta">${esc(meta)}</div>
+      ${e.note ? `<div class="meta">📝 ${esc(e.note)}</div>` : ''}</div>
+    <div class="actions">
+      <button class="btn btn-ghost btn-sm" data-edit="${e.id}">編輯</button>
+      ${e.state === 'left' || e.leave_date
+        ? `<button class="btn btn-ghost btn-sm" data-rehire="${e.id}">取消離職</button>`
+        : `<button class="btn btn-danger btn-sm" data-leave="${e.id}">離職</button>`}
+      ${!e.dispatch_count && !isManager ? `<button class="btn btn-danger btn-sm" data-del="${e.id}" title="只有從未排過班的人可以刪除">刪除</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function fillGroupSelect(sel, value, allowEmpty) {
+  sel.innerHTML = (allowEmpty ? '<option value="">（不分組）</option>' : '')
+    + data.groups.filter(g => g.active !== false).map(g => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
+  sel.value = value || (allowEmpty ? '' : (data.groups[0] && data.groups[0].id) || '');
+}
+
+document.getElementById('add-person').addEventListener('click', () => openPerson(null));
+document.getElementById('pm-roster').addEventListener('change', e => {
+  document.getElementById('pm-group-field').style.display = e.target.checked ? '' : 'none';
+});
+
+function openPerson(id) {
+  const e = id ? data.employees.find(x => x.id === id) : null;
+  document.getElementById('pm-title').textContent = e ? `編輯　${e.name}` : '新增人員（入職）';
+  document.getElementById('pm-id').value = e ? e.id : '';
+  document.getElementById('pm-name').value = e ? e.name : '';
+  document.getElementById('pm-name').disabled = !!e;   // 姓名是歷史紀錄的對應鍵，建立後不改
+  document.getElementById('pm-title-input').value = e ? (e.title || '') : '';
+  document.getElementById('pm-roster').checked = e ? e.in_roster !== false : true;
+  document.getElementById('pm-group-field').style.display = (e ? e.in_roster !== false : true) ? '' : 'none';
+  fillGroupSelect(document.getElementById('pm-group'), e ? e.group_id : '', false);
+  document.getElementById('pm-hire').value = e ? (e.hire_date || '') : today();
+  document.getElementById('pm-phone').value = e ? (e.phone || '') : '';
+  document.getElementById('pm-role').value = e ? e.role : 'member';
+  document.getElementById('pm-note').value = e ? (e.note || '') : '';
+  openModal('person-modal');
+}
+
+document.getElementById('pm-save').addEventListener('click', async () => {
+  const id = document.getElementById('pm-id').value;
+  const inRoster = document.getElementById('pm-roster').checked;
+  const body = {
+    name: document.getElementById('pm-name').value.trim(),
+    title: document.getElementById('pm-title-input').value.trim(),
+    in_roster: inRoster,
+    group_id: inRoster ? document.getElementById('pm-group').value : null,
+    hire_date: document.getElementById('pm-hire').value,
+    employee_phone: document.getElementById('pm-phone').value.trim(),
+    role: document.getElementById('pm-role').value,
+    note: document.getElementById('pm-note').value.trim(),
+  };
+  try {
+    if (id) await api('PUT', '/api/admin/employees/' + id, body);
+    else await api('POST', '/api/admin/employees', body);
+    closeModals(); toast('已儲存', 'ok'); reload();
+  } catch (err) { toast(err.message, 'err'); }
+});
+
+function openLeave(id) {
+  const e = data.employees.find(x => x.id === id);
+  const isManager = data.groups.some(g => g.manager_name === e.name);
+  document.getElementById('lm-id').value = id;
+  document.getElementById('lm-summary').textContent = `${e.name}　${groupName(e.group_id)}`
+    + (isManager ? '　⚠️ 他目前是組別主管，離職後請到「組別」頁更換主管。' : '');
+  document.getElementById('lm-date').value = today();
+  openModal('leave-modal');
+}
+
+document.getElementById('lm-save').addEventListener('click', async () => {
+  const id = document.getElementById('lm-id').value;
+  try {
+    const r = await api('PUT', `/api/admin/employees/${id}/leave`, {
+      leave_date: document.getElementById('lm-date').value,
+      clear_phone: document.getElementById('lm-clear-phone').checked,
+    });
+    closeModals();
+    toast(`已設定離職（清除之後的派工 ${r.removedDispatch} 筆、排休 ${r.removedLeaves} 筆）`, 'ok');
+    reload();
+  } catch (err) { toast(err.message, 'err'); }
+});
+
+async function rehire(id) {
+  const e = data.employees.find(x => x.id === id);
+  if (!confirm(`要取消 ${e.name} 的離職設定嗎？他會重新出現在派工名單。`)) return;
+  try { await api('PUT', `/api/admin/employees/${id}/rehire`, {}); toast('已取消離職', 'ok'); reload(); }
+  catch (err) { toast(err.message, 'err'); }
+}
+
+async function removePerson(id) {
+  const e = data.employees.find(x => x.id === id);
+  if (!confirm(`確定要刪除 ${e.name}？\n（只適用於建錯的資料；正式離職請用「離職」保留紀錄）`)) return;
+  try { await api('DELETE', `/api/admin/employees/${id}`); toast('已刪除', 'ok'); reload(); }
+  catch (err) { toast(err.message, 'err'); }
+}
+
+// ---------- 組別 ----------
+function renderGroups() {
+  const box = document.getElementById('groups-list');
+  box.innerHTML = data.groups.map(g => {
+    const members = data.employees.filter(e => e.group_id === g.id && e.state === 'active' && e.in_roster !== false);
+    const sites = data.sites.filter(s => s.group_id === g.id && s.active !== false);
+    return `<div class="card person">
+      <div><div class="name">${esc(g.name)}${g.active === false ? '<span class="tag left">停用</span>' : ''}</div>
+        <div class="meta">主管：${esc(g.manager_name)} ${esc(g.manager_title || '')}　組員 ${members.length} 人　案場 ${sites.length} 個</div></div>
+      <div class="actions"><button class="btn btn-ghost btn-sm" data-g="${g.id}">編輯</button></div>
+    </div>`;
+  }).join('') || '<div class="empty">還沒有組別</div>';
+  box.querySelectorAll('[data-g]').forEach(b => b.addEventListener('click', () => openGroup(b.dataset.g)));
+}
+
+document.getElementById('add-group').addEventListener('click', () => openGroup(null));
+
+function openGroup(id) {
+  const g = id ? data.groups.find(x => x.id === id) : null;
+  document.getElementById('gm-title').textContent = g ? `編輯　${g.name}` : '新增組別';
+  document.getElementById('gm-id').value = id || '';
+  document.getElementById('gm-name').value = g ? g.name : '';
+  document.getElementById('gm-mtitle').value = g ? (g.manager_title || '') : '';
+  const sel = document.getElementById('gm-manager');
+  sel.innerHTML = data.employees.filter(e => e.state === 'active' && e.in_roster !== false)
+    .map(e => `<option value="${esc(e.name)}">${esc(e.name)}（${esc(groupName(e.group_id))}）</option>`).join('');
+  if (g) sel.value = g.manager_name;
+  document.getElementById('gm-active-row').style.display = g ? '' : 'none';
+  document.getElementById('gm-active').checked = g ? g.active !== false : true;
+  openModal('group-modal');
+}
+
+document.getElementById('gm-save').addEventListener('click', async () => {
+  const id = document.getElementById('gm-id').value;
+  const body = {
+    name: document.getElementById('gm-name').value.trim(),
+    manager_name: document.getElementById('gm-manager').value,
+    manager_title: document.getElementById('gm-mtitle').value.trim(),
+  };
+  if (id) body.active = document.getElementById('gm-active').checked;
+  try {
+    if (id) await api('PUT', '/api/admin/groups/' + id, body);
+    else await api('POST', '/api/admin/groups', body);
+    closeModals(); toast('已儲存', 'ok'); reload();
+  } catch (err) { toast(err.message, 'err'); }
+});
+
+// ---------- 案場 ----------
+function renderSites() {
+  const box = document.getElementById('sites-list');
+  box.innerHTML = data.groups.map(g => {
+    const list = data.sites.filter(s => s.group_id === g.id);
+    if (!list.length) return '';
+    return `<div class="group-block"><div class="group-title"><span>${esc(g.name)}</span><span>${list.filter(s => s.active !== false).length} 個進行中</span></div>
+      ${list.map(s => `<div class="card person">
+        <div><div class="name">${esc(s.name)}${s.active === false ? '<span class="tag left">已結案</span>' : ''}</div>
+          <div class="meta">累計派工 ${s.used_count} 人次</div></div>
+        <div class="actions">
+          <button class="btn btn-ghost btn-sm" data-s="${s.id}">編輯</button>
+          ${s.active === false
+            ? `<button class="btn btn-ghost btn-sm" data-reopen="${s.id}">重新開啟</button>`
+            : `<button class="btn btn-danger btn-sm" data-close-site="${s.id}">結案</button>`}
+        </div></div>`).join('')}</div>`;
+  }).join('') || '<div class="empty">還沒有案場</div>';
+  box.querySelectorAll('[data-s]').forEach(b => b.addEventListener('click', () => openSite(+b.dataset.s)));
+  box.querySelectorAll('[data-close-site]').forEach(b => b.addEventListener('click', () => toggleSite(+b.dataset.closeSite, false)));
+  box.querySelectorAll('[data-reopen]').forEach(b => b.addEventListener('click', () => toggleSite(+b.dataset.reopen, true)));
+}
+
+document.getElementById('add-site').addEventListener('click', () => openSite(null));
+
+function openSite(id) {
+  const s = id ? data.sites.find(x => x.id === id) : null;
+  document.getElementById('sm-title').textContent = s ? `編輯　${s.name}` : '新增案場';
+  document.getElementById('sm-id').value = id || '';
+  document.getElementById('sm-name').value = s ? s.name : '';
+  fillGroupSelect(document.getElementById('sm-group'), s ? s.group_id : '', false);
+  openModal('site-modal');
+}
+
+document.getElementById('sm-save').addEventListener('click', async () => {
+  const id = document.getElementById('sm-id').value;
+  const body = { name: document.getElementById('sm-name').value.trim(), group_id: document.getElementById('sm-group').value };
+  try {
+    if (id) await api('PUT', '/api/admin/sites/' + id, body);
+    else await api('POST', '/api/admin/sites', body);
+    closeModals(); toast('已儲存', 'ok'); reload();
+  } catch (err) { toast(err.message, 'err'); }
+});
+
+async function toggleSite(id, active) {
+  const s = data.sites.find(x => x.id === id);
+  if (!active && !confirm(`確定 ${s.name} 結案？之後派工下拉不會再出現這個案場（歷史紀錄保留）。`)) return;
+  try { await api('PUT', '/api/admin/sites/' + id, { active }); toast(active ? '已重新開啟' : '已結案', 'ok'); reload(); }
+  catch (err) { toast(err.message, 'err'); }
+}
+
+// ---------- 紀錄 ----------
+async function loadLogs() {
+  try {
+    const rows = await api('GET', '/api/admin/logs');
+    document.getElementById('logs-list').innerHTML = rows.map(r =>
+      `<div class="log"><b>${esc(r.action)}</b>　${esc(r.detail || '')}<br><span>${esc(r.t)}　${esc(r.operator || '')}</span></div>`
+    ).join('') || '<div class="empty">還沒有紀錄</div>';
+  } catch (err) { toast(err.message, 'err'); }
+}
+
+start();
+</script>
+</body>
+</html>

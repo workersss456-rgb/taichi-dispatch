@@ -49,29 +49,41 @@ async function log(action, detail, operator) {
 // ============================================================
 // 主檔 + 指定日期的完整狀態（開站只打這一支）
 // ============================================================
+// 指定日期的組織架構：到職日之前不出現、離職日當天起不再出現
+async function loadRoster(date) {
+  const groups = (await pool.query('SELECT * FROM groups WHERE active IS NOT FALSE ORDER BY sort_order, id')).rows;
+  const sites = (await pool.query('SELECT name, group_id FROM sites WHERE active IS NOT FALSE ORDER BY sort_order, id')).rows;
+  const employees = (await pool.query(
+    `SELECT name, group_id, role FROM employees
+     WHERE active IS NOT FALSE AND in_roster IS NOT FALSE
+       AND (hire_date IS NULL OR hire_date <= $1::date)
+       AND (leave_date IS NULL OR leave_date > $1::date)
+     ORDER BY sort_order, id`, [date]
+  )).rows;
+
+  const warnings = [];
+  const groupsData = groups.map((g) => ({
+    id: g.id,
+    name: g.name,
+    managerName: g.manager_name,
+    managerTitle: g.manager_title || '',
+    sites: sites.filter((s) => s.group_id === g.id).map((s) => s.name),
+    members: employees.filter((e) => e.group_id === g.id && e.name !== g.manager_name).map((e) => e.name),
+  }));
+  sites.filter((s) => !s.group_id).forEach((s) => warnings.push(`案場「${s.name}」沒有對應到任何組別`));
+  employees.filter((e) => !e.group_id).forEach((e) => warnings.push(`員工「${e.name}」沒有對應到任何組別`));
+  groupsData.filter((g) => !g.sites.length).forEach((g) => warnings.push(`「${g.name}」目前沒有任何案場`));
+  return { groupsData, warnings };
+}
+
 router.get('/bootstrap', async (req, res) => {
   try {
     const date = req.query.date || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
     const month = (req.query.month || date).slice(0, 7);
 
-    const groups = (await pool.query('SELECT * FROM groups WHERE active IS NOT FALSE ORDER BY sort_order, id')).rows;
-    const sites = (await pool.query('SELECT name, group_id FROM sites WHERE active IS NOT FALSE ORDER BY sort_order, id')).rows;
-    const employees = (await pool.query('SELECT name, group_id, role FROM employees WHERE active IS NOT FALSE ORDER BY sort_order, id')).rows;
     const leaveTypes = (await pool.query('SELECT name FROM leave_types ORDER BY sort_order, id')).rows.map((r) => r.name);
     const tempPool = (await pool.query('SELECT name FROM saved_temp_workers ORDER BY name')).rows.map((r) => r.name);
-
-    // 組織架構整理成前端原本就在用的格式
-    const warnings = [];
-    const groupsData = groups.map((g) => ({
-      id: g.id,
-      name: g.name,
-      managerName: g.manager_name,
-      managerTitle: g.manager_title || '',
-      sites: sites.filter((s) => s.group_id === g.id).map((s) => s.name),
-      members: employees.filter((e) => e.group_id === g.id && e.name !== g.manager_name).map((e) => e.name),
-    }));
-    sites.filter((s) => !s.group_id).forEach((s) => warnings.push(`案場「${s.name}」沒有對應到任何組別`));
-    employees.filter((e) => !e.group_id).forEach((e) => warnings.push(`員工「${e.name}」沒有對應到任何組別`));
+    const { groupsData, warnings } = await loadRoster(date);
 
     const day = await loadDay(date);
     const leaves = await loadLeaveMonth(month);
@@ -82,6 +94,7 @@ router.get('/bootstrap', async (req, res) => {
       dailyDispatchData: { [date]: day.dispatch },
       dailyTempWorkers: { [date]: day.tempWorkers },
       subcontractData: { [date]: day.subcontracts },
+      siteTasks: { [date]: day.tasks },
       versions: day.versions,
       monthlyLeavesDb: { [month]: leaves },
       lastUpdate: day.lastUpdate,
@@ -98,7 +111,8 @@ router.get('/day', async (req, res) => {
     const date = req.query.date;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return res.status(400).json({ error: '日期格式不正確' });
     const day = await loadDay(date);
-    res.json({ date, ...day });
+    const roster = await loadRoster(date);
+    res.json({ date, ...day, groupsData: roster.groupsData, configWarnings: roster.warnings });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '讀取當日資料失敗' });
@@ -112,6 +126,12 @@ async function loadDay(date) {
   )).rows;
   const temps = (await pool.query('SELECT * FROM temp_workers WHERE work_date = $1 ORDER BY sort_order, id', [date])).rows;
   const subs = (await pool.query('SELECT * FROM subcontracts WHERE work_date = $1 ORDER BY sort_order, id', [date])).rows;
+  const taskRows = (await pool.query('SELECT group_id, site, content FROM site_tasks WHERE work_date = $1', [date])).rows;
+  const tasks = {};
+  taskRows.forEach((t) => {
+    if (!tasks[t.group_id]) tasks[t.group_id] = {};
+    tasks[t.group_id][t.site] = t.content;
+  });
 
   const dispatch = {};
   const versions = {};
@@ -145,7 +165,7 @@ async function loadDay(date) {
 
   const last = dayGroups.slice().sort((a, b) => Number(b.updated_ms) - Number(a.updated_ms))[0];
   return {
-    dispatch, versions, tempWorkers, subcontracts,
+    dispatch, versions, tempWorkers, subcontracts, tasks,
     lastUpdate: last ? { updatedBy: last.updated_by, updatedAt: Number(last.updated_ms) } : null,
   };
 }
@@ -262,6 +282,18 @@ router.put('/day-group', async (req, res) => {
           [date, groupId, t.name, t.site || '', t.ratio || 1, i]
         );
         await client.query('INSERT INTO saved_temp_workers (name) VALUES ($1) ON CONFLICT DO NOTHING', [t.name]);
+      }
+    }
+
+    if (req.body.tasks && typeof req.body.tasks === 'object') {
+      await client.query('DELETE FROM site_tasks WHERE work_date = $1 AND group_id = $2', [date, groupId]);
+      for (const [site, content] of Object.entries(req.body.tasks)) {
+        const text = String(content || '').trim();
+        if (!text) continue;
+        await client.query(
+          'INSERT INTO site_tasks (work_date, group_id, site, content) VALUES ($1,$2,$3,$4)',
+          [date, groupId, site, text.slice(0, 1000)]
+        );
       }
     }
 
@@ -525,6 +557,288 @@ router.get('/masters', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: '讀取主檔失敗' });
+  }
+});
+
+// ============================================================
+// 人員與組織管理（僅限 admin：總經理、人資）
+// ============================================================
+async function requireAdmin(req, res) {
+  const user = await requireUser(req, res);
+  if (!user) return null;
+  if (user.role !== 'admin') { res.status(403).json({ error: 'forbidden', message: '只有管理者可以維護人員與組織' }); return null; }
+  return user;
+}
+
+router.get('/admin/people', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
+    const employees = (await pool.query(
+      `SELECT id, name, group_id, phone, role, title, in_roster, active, note,
+              TO_CHAR(hire_date,'YYYY-MM-DD') AS hire_date, TO_CHAR(leave_date,'YYYY-MM-DD') AS leave_date,
+              (SELECT COUNT(*)::int FROM dispatch_entries d WHERE d.person_name = e.name) AS dispatch_count
+       FROM employees e ORDER BY active DESC, sort_order, id`
+    )).rows.map((e) => ({
+      ...e,
+      state: !e.active ? 'deleted'
+        : (e.leave_date && e.leave_date <= today) ? 'left'
+        : (e.hire_date && e.hire_date > today) ? 'upcoming'
+        : 'active',
+    }));
+    const groups = (await pool.query('SELECT * FROM groups ORDER BY sort_order, id')).rows;
+    const sites = (await pool.query(
+      `SELECT s.*, (SELECT COUNT(*)::int FROM dispatch_entries d WHERE d.assigned_site = s.name) AS used_count
+       FROM sites s ORDER BY s.active DESC, s.sort_order, s.id`
+    )).rows;
+    const leaveTypes = (await pool.query('SELECT * FROM leave_types ORDER BY sort_order, id')).rows;
+    res.json({ employees, groups, sites, leaveTypes });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '讀取失敗' });
+  }
+});
+
+function cleanDate(v) { return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null; }
+
+// 新增人員（入職）
+async function phoneTaken(phone, exceptId) {
+  const p = normPhone(phone);
+  if (!p) return null;
+  return (await pool.query(
+    `SELECT name FROM employees WHERE REGEXP_REPLACE(COALESCE(phone,''),'[^0-9]','','g') = $1 AND id <> $2 LIMIT 1`,
+    [p, exceptId || 0]
+  )).rows[0] || null;
+}
+
+router.post('/admin/employees', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const dup = await phoneTaken(req.body.employee_phone);
+    if (dup) return res.status(400).json({ error: `這組手機已經是 ${dup.name} 在使用` });
+    const name = (req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: '請填寫姓名' });
+    const inRoster = req.body.in_roster !== false;
+    if (inRoster && !req.body.group_id) return res.status(400).json({ error: '要排班的同仁請選擇組別' });
+    const maxSort = (await pool.query('SELECT COALESCE(MAX(sort_order),0)::int AS m FROM employees')).rows[0].m;
+    const row = (await pool.query(
+      `INSERT INTO employees (name, group_id, phone, role, title, hire_date, in_roster, note, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [name, req.body.group_id || null, normPhone(req.body.employee_phone), req.body.role || 'member',
+        (req.body.title || '').trim(), cleanDate(req.body.hire_date), inRoster, (req.body.note || '').trim(), maxSort + 1]
+    )).rows[0];
+    await log('新增人員', `${name}　${req.body.group_id || '不排班'}　到職 ${req.body.hire_date || '即日'}`, user.name);
+    res.status(201).json(row);
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: '已經有同名的人員了（同名同姓請加註區別，例如「王小明B」）' });
+    console.error(err);
+    res.status(500).json({ error: '新增失敗' });
+  }
+});
+
+// 修改人員（調組、改職稱、改手機、改權限）
+router.put('/admin/employees/:id', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const cur = (await pool.query('SELECT * FROM employees WHERE id = $1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: '找不到這位人員' });
+    const b = req.body;
+    if (b.employee_phone) {
+      const dup = await phoneTaken(b.employee_phone, cur.id);
+      if (dup) return res.status(400).json({ error: `這組手機已經是 ${dup.name} 在使用` });
+    }
+    // 防止管理者把自己降級後把自己鎖在門外
+    if (cur.name === user.name && b.role && b.role !== 'admin') {
+      return res.status(400).json({ error: '不能移除自己的管理者權限，請由另一位管理者操作' });
+    }
+    const row = (await pool.query(
+      `UPDATE employees SET group_id=$1, phone=$2, role=$3, title=$4, hire_date=$5, in_roster=$6, note=$7
+       WHERE id=$8 RETURNING *`,
+      [b.group_id === undefined ? cur.group_id : (b.group_id || null),
+        b.employee_phone === undefined ? cur.phone : normPhone(b.employee_phone),
+        b.role || cur.role, b.title === undefined ? cur.title : b.title,
+        b.hire_date === undefined ? cur.hire_date : cleanDate(b.hire_date),
+        b.in_roster === undefined ? cur.in_roster : !!b.in_roster,
+        b.note === undefined ? cur.note : b.note, req.params.id]
+    )).rows[0];
+    const changes = [];
+    if (cur.group_id !== row.group_id) changes.push(`組別 ${cur.group_id || '無'} → ${row.group_id || '無'}`);
+    if (cur.role !== row.role) changes.push(`權限 ${cur.role} → ${row.role}`);
+    if ((cur.phone || '') !== (row.phone || '')) changes.push('手機已更新');
+    await log('修改人員', `${row.name}　${changes.join('、') || '基本資料'}`, user.name);
+    res.json(row);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '修改失敗' });
+  }
+});
+
+// 離職：設定離職日，當天起不再出現在派工與排休名單；歷史紀錄完整保留
+router.put('/admin/employees/:id/leave', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const leaveDate = cleanDate(req.body.leave_date);
+    if (!leaveDate) return res.status(400).json({ error: '請選擇離職日' });
+    await client.query('BEGIN');
+    const row = (await client.query(
+      `UPDATE employees SET leave_date = $1, phone = CASE WHEN $2 THEN '' ELSE phone END WHERE id = $3 RETURNING *`,
+      [leaveDate, req.body.clear_phone !== false, req.params.id]
+    )).rows[0];
+    if (!row) { await client.query('ROLLBACK'); return res.status(404).json({ error: '找不到這位人員' }); }
+    // 離職日之後已經排好的派工與排休一併清掉，免得名單外的人還佔著工數
+    const d = await client.query('DELETE FROM dispatch_entries WHERE person_name = $1 AND work_date >= $2', [row.name, leaveDate]);
+    const l = await client.query('DELETE FROM leaves WHERE person_name = $1 AND leave_date >= $2', [row.name, leaveDate]);
+    await client.query('COMMIT');
+    await log('設定離職', `${row.name}　離職日 ${leaveDate}（清除之後派工 ${d.rowCount} 筆、排休 ${l.rowCount} 筆）`, user.name);
+    res.json({ ok: true, removedDispatch: d.rowCount, removedLeaves: l.rowCount });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: '設定離職失敗' });
+  } finally {
+    client.release();
+  }
+});
+
+// 取消離職（回任或設錯）
+router.put('/admin/employees/:id/rehire', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const row = (await pool.query('UPDATE employees SET leave_date = NULL, active = true WHERE id = $1 RETURNING name', [req.params.id])).rows[0];
+    if (!row) return res.status(404).json({ error: '找不到這位人員' });
+    await log('取消離職', row.name, user.name);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '操作失敗' });
+  }
+});
+
+// 刪除：只有「從來沒有派工紀錄」的人（建錯資料）才能刪；有紀錄的請用離職
+router.delete('/admin/employees/:id', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const row = (await pool.query('SELECT name FROM employees WHERE id = $1', [req.params.id])).rows[0];
+    if (!row) return res.status(404).json({ error: '找不到這位人員' });
+    const used = (await pool.query('SELECT COUNT(*)::int AS c FROM dispatch_entries WHERE person_name = $1', [row.name])).rows[0].c;
+    if (used) return res.status(400).json({ error: `${row.name} 已經有 ${used} 筆派工紀錄，請改用「設定離職」保留歷史` });
+    const isManager = (await pool.query('SELECT 1 FROM groups WHERE manager_name = $1', [row.name])).rows.length;
+    if (isManager) return res.status(400).json({ error: `${row.name} 目前是組別主管，請先更換該組主管` });
+    await pool.query('DELETE FROM employees WHERE id = $1', [req.params.id]);
+    await log('刪除人員', row.name, user.name);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '刪除失敗' });
+  }
+});
+
+// 組別：新增、改名、換主管
+router.post('/admin/groups', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const name = (req.body.name || '').trim();
+    const manager = (req.body.manager_name || '').trim();
+    if (!name || !manager) return res.status(400).json({ error: '請填寫組別名稱與主管' });
+    const id = 'g' + Date.now().toString(36);
+    const maxSort = (await pool.query('SELECT COALESCE(MAX(sort_order),0)::int AS m FROM groups')).rows[0].m;
+    await pool.query(
+      'INSERT INTO groups (id, name, manager_name, manager_title, sort_order) VALUES ($1,$2,$3,$4,$5)',
+      [id, name, manager, (req.body.manager_title || '').trim(), maxSort + 1]
+    );
+    await pool.query(`UPDATE employees SET group_id = $1, role = CASE WHEN role = 'admin' THEN role ELSE 'manager' END WHERE name = $2`, [id, manager]);
+    await log('新增組別', `${name}（主管 ${manager}）`, user.name);
+    res.status(201).json({ ok: true, id });
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: '已經有同名的組別了' });
+    console.error(err);
+    res.status(500).json({ error: '新增組別失敗' });
+  }
+});
+
+router.put('/admin/groups/:id', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const cur = (await pool.query('SELECT * FROM groups WHERE id = $1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: '找不到這個組別' });
+    const name = (req.body.name || cur.name).trim();
+    const manager = (req.body.manager_name || cur.manager_name).trim();
+    const title = req.body.manager_title === undefined ? cur.manager_title : req.body.manager_title;
+    const active = req.body.active === undefined ? cur.active : !!req.body.active;
+    await pool.query('UPDATE groups SET name=$1, manager_name=$2, manager_title=$3, active=$4 WHERE id=$5',
+      [name, manager, title, active, req.params.id]);
+    if (manager !== cur.manager_name) {
+      // 新主管併入本組並取得主管權限；舊主管降為組員（仍留在本組，要調走再到人員頁調整）
+      await pool.query(`UPDATE employees SET group_id = $1, role = CASE WHEN role = 'admin' THEN role ELSE 'manager' END WHERE name = $2`, [req.params.id, manager]);
+      await pool.query(`UPDATE employees SET role = 'member' WHERE name = $1 AND role = 'manager'`, [cur.manager_name]);
+    }
+    await log('修改組別', `${cur.name}${manager !== cur.manager_name ? `　主管 ${cur.manager_name} → ${manager}` : ''}`, user.name);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '修改組別失敗' });
+  }
+});
+
+// 案場：新增、改組、結案（停用後不再出現在下拉，但歷史紀錄保留）
+router.post('/admin/sites', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const name = (req.body.name || '').trim();
+    if (!name || !req.body.group_id) return res.status(400).json({ error: '請填寫案場名稱與負責組別' });
+    await pool.query(
+      `INSERT INTO sites (name, group_id, sort_order) VALUES ($1,$2,(SELECT COALESCE(MAX(sort_order),0)+1 FROM sites))
+       ON CONFLICT (name, group_id) DO UPDATE SET active = true`, [name, req.body.group_id]
+    );
+    await log('新增案場', `${name}（${req.body.group_id}）`, user.name);
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '新增案場失敗' });
+  }
+});
+
+router.put('/admin/sites/:id', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const cur = (await pool.query('SELECT * FROM sites WHERE id = $1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: '找不到這個案場' });
+    await pool.query('UPDATE sites SET name=$1, group_id=$2, active=$3 WHERE id=$4', [
+      (req.body.name || cur.name).trim(), req.body.group_id || cur.group_id,
+      req.body.active === undefined ? cur.active : !!req.body.active, req.params.id,
+    ]);
+    await log(req.body.active === false ? '案場結案' : '修改案場', cur.name, user.name);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: '這個組別已經有同名案場了' });
+    console.error(err);
+    res.status(500).json({ error: '修改案場失敗' });
+  }
+});
+
+router.get('/admin/logs', async (req, res) => {
+  try {
+    const user = await requireAdmin(req, res);
+    if (!user) return;
+    const rows = (await pool.query(
+      `SELECT action, detail, operator, TO_CHAR(created_at AT TIME ZONE 'Asia/Taipei','YYYY-MM-DD HH24:MI') AS t
+       FROM audit_logs ORDER BY id DESC LIMIT 200`
+    )).rows;
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '讀取失敗' });
   }
 });
 

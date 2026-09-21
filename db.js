@@ -118,6 +118,17 @@ async function init() {
     );
     CREATE INDEX IF NOT EXISTS idx_leave_date ON leaves (leave_date);
 
+    -- 每日工作安排：每組每天每個案場一段文字（今天要做什麼、注意事項）
+    CREATE TABLE IF NOT EXISTS site_tasks (
+      work_date DATE NOT NULL,
+      group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      site TEXT NOT NULL,
+      content TEXT DEFAULT '',
+      PRIMARY KEY (work_date, group_id, site)
+    );
+
+    CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, ran_at TIMESTAMPTZ DEFAULT NOW());
+
     CREATE TABLE IF NOT EXISTS audit_logs (
       id SERIAL PRIMARY KEY,
       action TEXT NOT NULL,
@@ -127,7 +138,39 @@ async function init() {
     );
   `);
 
+  // ---------- 人員生命週期欄位 ----------
+  // hire_date 到職日、leave_date 離職日（當天起不再排班）、in_roster 是否出現在派工名冊
+  // 人資、行政這類管理者 in_roster = false，只負責管理不會被排班
+  await pool.query(`
+    ALTER TABLE employees ADD COLUMN IF NOT EXISTS title TEXT DEFAULT '';
+    ALTER TABLE employees ADD COLUMN IF NOT EXISTS hire_date DATE;
+    ALTER TABLE employees ADD COLUMN IF NOT EXISTS leave_date DATE;
+    ALTER TABLE employees ADD COLUMN IF NOT EXISTS in_roster BOOLEAN DEFAULT true;
+    ALTER TABLE employees ADD COLUMN IF NOT EXISTS note TEXT DEFAULT '';
+  `);
+
   await seed();
+  await migrateOnce('2026-09-hr-not-in-roster', async (client) => {
+    // 沒有組別的管理者（例如人資）不列入派工名冊，也不再跳「沒有對應組別」的警告
+    await client.query(`UPDATE employees SET in_roster = false WHERE group_id IS NULL AND role = 'admin'`);
+  });
+}
+
+async function migrateOnce(name, fn) {
+  const done = (await pool.query('SELECT 1 FROM schema_migrations WHERE name = $1', [name])).rows.length;
+  if (done) return;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await fn(client);
+    await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [name]);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function seed() {

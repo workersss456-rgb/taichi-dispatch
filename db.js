@@ -127,6 +127,24 @@ async function init() {
       PRIMARY KEY (work_date, group_id, site)
     );
 
+    -- 案場工程進度（甘特圖）：以半天為單位
+    CREATE TABLE IF NOT EXISTS plan_tasks (
+      id SERIAL PRIMARY KEY,
+      site TEXT NOT NULL,
+      group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,
+      name TEXT NOT NULL,
+      start_date DATE NOT NULL,
+      start_half TEXT NOT NULL DEFAULT 'am',   -- am 上午 / pm 下午
+      duration_halves INTEGER NOT NULL DEFAULT 2,  -- 1 = 半天、2 = 一天
+      progress INTEGER DEFAULT 0,              -- 完成百分比 0~100
+      note TEXT DEFAULT '',
+      sort_order INTEGER DEFAULT 0,
+      created_by TEXT DEFAULT '',
+      updated_by TEXT DEFAULT '',
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_plan_site ON plan_tasks (site, start_date);
+
     CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, ran_at TIMESTAMPTZ DEFAULT NOW());
 
     CREATE TABLE IF NOT EXISTS audit_logs (

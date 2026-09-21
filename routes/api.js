@@ -842,6 +842,128 @@ router.get('/admin/logs', async (req, res) => {
   }
 });
 
+// ============================================================
+// 案場甘特圖（半天為單位）
+// ============================================================
+// 把「開始日＋上下午＋半天數」換算成結束日與上下午，方便前端與匯出
+function planEnd(startDate, startHalf, halves) {
+  const startSlot = startHalf === 'pm' ? 1 : 0;
+  const endSlot = startSlot + Math.max(1, halves) - 1;
+  const d = new Date(startDate + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + Math.floor(endSlot / 2));
+  return { end_date: d.toISOString().slice(0, 10), end_half: endSlot % 2 ? 'pm' : 'am' };
+}
+
+function planRow(r) {
+  const start = typeof r.start_date === 'string' ? r.start_date : r.start_fmt;
+  return { id: r.id, site: r.site, group_id: r.group_id, name: r.name, start_date: r.start_fmt || start,
+    start_half: r.start_half, duration_halves: r.duration_halves, progress: r.progress, note: r.note,
+    sort_order: r.sort_order, updated_by: r.updated_by, ...planEnd(r.start_fmt || start, r.start_half, r.duration_halves) };
+}
+
+router.get('/gantt', async (req, res) => {
+  try {
+    const from = req.query.from, to = req.query.to;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from || '') || !/^\d{4}-\d{2}-\d{2}$/.test(to || '')) {
+      return res.status(400).json({ error: '請指定起訖日期' });
+    }
+    const params = [from, to];
+    let sql = `SELECT *, TO_CHAR(start_date,'YYYY-MM-DD') AS start_fmt FROM plan_tasks
+               WHERE start_date <= $2::date
+                 AND start_date + ((CASE WHEN start_half='pm' THEN 1 ELSE 0 END + duration_halves - 1) / 2) * INTERVAL '1 day' >= $1::date`;
+    if (req.query.site) { params.push(req.query.site); sql += ` AND site = $${params.length}`; }
+    sql += ' ORDER BY site, sort_order, start_date, start_half, id';
+    const tasks = (await pool.query(sql, params)).rows.map(planRow);
+    const sites = (await pool.query(
+      `SELECT s.name, s.group_id, g.name AS group_name FROM sites s LEFT JOIN groups g ON g.id = s.group_id
+       WHERE s.active IS NOT FALSE ORDER BY g.sort_order, s.sort_order, s.id`
+    )).rows;
+    res.json({ from, to, tasks, sites });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '讀取甘特圖失敗' });
+  }
+});
+
+async function siteGroup(site) {
+  const r = (await pool.query('SELECT group_id FROM sites WHERE name = $1 AND active IS NOT FALSE ORDER BY id LIMIT 1', [site])).rows[0];
+  return r ? r.group_id : null;
+}
+
+function validPlan(b) {
+  if (!(b.name || '').trim()) return '請填寫工項名稱';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(b.start_date || '')) return '請選擇開始日期';
+  const h = parseInt(b.duration_halves, 10);
+  if (!h || h < 1 || h > 400) return '工期請填 0.5 天到 200 天之間';
+  return null;
+}
+
+router.post('/gantt/tasks', async (req, res) => {
+  try {
+    const user = await requireUser(req, res);
+    if (!user) return;
+    const b = req.body;
+    const err = validPlan(b);
+    if (err) return res.status(400).json({ error: err });
+    const groupId = await siteGroup(b.site);
+    if (!groupId) return res.status(400).json({ error: '找不到這個案場' });
+    if (!canEditGroup(user, groupId)) return res.status(403).json({ error: 'forbidden', message: `${user.name} 只能排自己組別案場的進度` });
+    const maxSort = (await pool.query('SELECT COALESCE(MAX(sort_order),0)::int AS m FROM plan_tasks WHERE site = $1', [b.site])).rows[0].m;
+    const row = (await pool.query(
+      `INSERT INTO plan_tasks (site, group_id, name, start_date, start_half, duration_halves, progress, note, sort_order, created_by, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10) RETURNING *, TO_CHAR(start_date,'YYYY-MM-DD') AS start_fmt`,
+      [b.site, groupId, b.name.trim(), b.start_date, b.start_half === 'pm' ? 'pm' : 'am', parseInt(b.duration_halves, 10),
+        Math.min(100, Math.max(0, parseInt(b.progress, 10) || 0)), (b.note || '').trim(), maxSort + 1, user.name]
+    )).rows[0];
+    await log('新增工項', `${b.site}｜${row.name}`, user.name);
+    res.status(201).json(planRow(row));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '新增工項失敗' });
+  }
+});
+
+router.put('/gantt/tasks/:id', async (req, res) => {
+  try {
+    const user = await requireUser(req, res);
+    if (!user) return;
+    const cur = (await pool.query(`SELECT *, TO_CHAR(start_date,'YYYY-MM-DD') AS start_fmt FROM plan_tasks WHERE id = $1`, [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: '找不到這個工項' });
+    if (!canEditGroup(user, cur.group_id)) return res.status(403).json({ error: 'forbidden', message: '只能修改自己組別案場的進度' });
+    const b = { ...planRow(cur), ...req.body };
+    const err = validPlan(b);
+    if (err) return res.status(400).json({ error: err });
+    const row = (await pool.query(
+      `UPDATE plan_tasks SET name=$1, start_date=$2, start_half=$3, duration_halves=$4, progress=$5, note=$6,
+         sort_order=$7, updated_by=$8, updated_at=NOW()
+       WHERE id=$9 RETURNING *, TO_CHAR(start_date,'YYYY-MM-DD') AS start_fmt`,
+      [b.name.trim(), b.start_date, b.start_half === 'pm' ? 'pm' : 'am', parseInt(b.duration_halves, 10),
+        Math.min(100, Math.max(0, parseInt(b.progress, 10) || 0)), (b.note || '').trim(),
+        parseInt(b.sort_order, 10) || 0, user.name, req.params.id]
+    )).rows[0];
+    res.json(planRow(row));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '修改工項失敗' });
+  }
+});
+
+router.delete('/gantt/tasks/:id', async (req, res) => {
+  try {
+    const user = await requireUser(req, res);
+    if (!user) return;
+    const cur = (await pool.query('SELECT * FROM plan_tasks WHERE id = $1', [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: '找不到這個工項' });
+    if (!canEditGroup(user, cur.group_id)) return res.status(403).json({ error: 'forbidden', message: '只能刪除自己組別案場的工項' });
+    await pool.query('DELETE FROM plan_tasks WHERE id = $1', [req.params.id]);
+    await log('刪除工項', `${cur.site}｜${cur.name}`, user.name);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: '刪除失敗' });
+  }
+});
+
 router.put('/employees/:name/phone', async (req, res) => {
   try {
     const user = await requireUser(req, res);

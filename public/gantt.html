@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>案場甘特圖｜太綺派工通</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas-pro@2.4.1/dist/html2canvas-pro.min.js" defer></script>
+<style>
+  :root { --navy:#0f172a; --blue:#2563eb; --text:#1e293b; --sub:#64748b; --faint:#94a3b8; --border:#e2e8f0;
+          --bg:#f1f5f9; --weekend:#f8fafc; --sun:#fef2f2; --today:#ef4444; --slot:18px; --label:190px; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-size:14px; line-height:1.45;
+         font-family:"Noto Sans TC","Microsoft JhengHei",-apple-system,sans-serif; -webkit-tap-highlight-color:transparent; }
+  header { background:var(--navy); color:#fff; padding:12px 16px; position:sticky; top:0; z-index:30;
+           display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  header .brand { display:flex; align-items:center; gap:8px; font-weight:700; }
+  header .brand b { background:var(--blue); padding:2px 8px; border-radius:6px; font-size:13px; }
+  header a { color:#cbd5e1; font-size:13px; text-decoration:none; }
+  main { padding:12px; max-width:1400px; margin:0 auto; }
+
+  .controls { background:#fff; border:1px solid var(--border); border-radius:12px; padding:10px 12px; margin-bottom:10px;
+              display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; }
+  .ctl { display:flex; flex-direction:column; gap:3px; }
+  .ctl label { font-size:11.5px; color:var(--sub); }
+  input, select, textarea { padding:8px 10px; border:1px solid var(--border); border-radius:8px; font:inherit; font-size:16px; background:#fff; color:var(--text); }
+  .btn { border:none; border-radius:8px; padding:9px 13px; font:inherit; font-weight:600; cursor:pointer; white-space:nowrap; }
+  .btn-primary { background:var(--blue); color:#fff; }
+  .btn-ghost { background:#fff; border:1px solid var(--border); color:var(--text); }
+  .btn-danger { background:#fff; border:1px solid #fecaca; color:#dc2626; }
+  .btn-sm { padding:6px 10px; font-size:13px; }
+  .quick { display:flex; gap:4px; flex-wrap:wrap; }
+  .quick .btn { padding:7px 10px; font-size:13px; }
+  .spacer { flex:1; }
+
+  /* ---------- 甘特圖 ---------- */
+  .gantt-wrap { background:#fff; border:1px solid var(--border); border-radius:12px; overflow:auto; max-height:calc(100vh - 210px); position:relative; }
+  .gantt { display:inline-block; min-width:100%; position:relative; }
+  .g-head { display:flex; position:sticky; top:0; z-index:12; background:#fff; border-bottom:1px solid var(--border); }
+  .g-label, .g-label-head { width:var(--label); min-width:var(--label); position:sticky; left:0; background:#fff; z-index:11;
+                            border-right:1px solid var(--border); padding:6px 8px; }
+  .g-label-head { z-index:13; font-size:12px; color:var(--sub); display:flex; align-items:flex-end; font-weight:700; }
+  .g-scale { display:flex; }
+  .g-day { width:calc(var(--slot) * 2); border-right:1px solid var(--border); text-align:center; font-size:11px; color:var(--sub); }
+  .g-day .d { font-weight:700; color:var(--text); font-size:12px; padding-top:3px; }
+  .g-day.wk-sat { background:var(--weekend); } .g-day.wk-sun { background:var(--sun); } .g-day.wk-sun .d { color:#dc2626; }
+  .g-day.is-today { background:#fee2e2; }
+  .g-day .halves { display:flex; border-top:1px dashed var(--border); margin-top:2px; }
+  .g-day .halves span { flex:1; font-size:9.5px; color:var(--faint); padding:1px 0; }
+  .g-day .halves span + span { border-left:1px dashed #eef2f7; }
+  .g-month { font-size:10px; color:var(--blue); font-weight:700; height:13px; }
+
+  .g-row { display:flex; border-bottom:1px solid #f1f5f9; min-height:36px; }
+  .g-row:hover .g-label { background:#f8fafc; }
+  .g-label { font-size:13px; cursor:pointer; display:flex; flex-direction:column; justify-content:center; }
+  .g-label .n { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .g-label .m { font-size:11px; color:var(--faint); }
+  .g-site { display:flex; background:#f8fafc; border-bottom:1px solid var(--border); position:sticky; }
+  .g-site .g-label { background:#f1f5f9; font-weight:700; font-size:13px; cursor:default; flex-direction:row; align-items:center; gap:6px; }
+  .g-site .g-label .add { margin-left:auto; border:none; background:var(--blue); color:#fff; border-radius:6px; font-size:12px; padding:2px 8px; cursor:pointer; }
+  .g-track { position:relative; }
+  .g-track .col { position:absolute; top:0; bottom:0; width:calc(var(--slot) * 2); border-right:1px solid #f1f5f9; }
+  .g-track .col.wk-sat { background:var(--weekend); } .g-track .col.wk-sun { background:var(--sun); }
+  .g-track .today { position:absolute; top:0; bottom:0; width:2px; background:var(--today); opacity:.7; z-index:3; }
+  .bar { position:absolute; top:6px; height:24px; border-radius:6px; color:#fff; font-size:12px; font-weight:600;
+         display:flex; align-items:center; padding:0 6px; overflow:hidden; white-space:nowrap; cursor:pointer; z-index:4;
+         box-shadow:0 1px 2px rgba(0,0,0,.15); }
+  .bar .fill { position:absolute; left:0; top:0; bottom:0; background:rgba(255,255,255,.28); pointer-events:none; }
+  .bar span { position:relative; overflow:hidden; text-overflow:ellipsis; }
+  .bar.out-left { border-top-left-radius:0; border-bottom-left-radius:0; }
+  .bar.out-right { border-top-right-radius:0; border-bottom-right-radius:0; }
+  .empty { padding:40px; text-align:center; color:var(--faint); }
+  .legend { font-size:12px; color:var(--sub); margin:8px 2px; display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
+  .legend i { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:-2px; margin-right:4px; }
+
+  /* ---------- 視窗 ---------- */
+  .modal-bg { position:fixed; inset:0; background:rgba(15,23,42,.5); display:none; align-items:flex-end; justify-content:center; z-index:50; }
+  .modal-bg.show { display:flex; }
+  .modal { background:#fff; width:100%; max-width:460px; border-radius:16px 16px 0 0; padding:18px 16px 22px; max-height:92vh; overflow-y:auto; }
+  @media (min-width:640px) { .modal-bg { align-items:center; } .modal { border-radius:16px; } }
+  .modal h3 { margin:0 0 12px; font-size:17px; }
+  .field { margin-bottom:10px; } .field > label { display:block; font-size:12.5px; color:var(--sub); margin-bottom:4px; }
+  .field input, .field select, .field textarea { width:100%; }
+  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .seg { display:flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  .seg button { flex:1; border:none; background:#fff; padding:9px; font:inherit; cursor:pointer; color:var(--sub); }
+  .seg button.on { background:var(--blue); color:#fff; font-weight:700; }
+  .calc { background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; border-radius:8px; padding:8px 10px; font-size:13px; margin:4px 0 10px; }
+  .modal-actions { display:flex; gap:8px; margin-top:14px; }
+  .modal-actions .btn { flex:1; }
+  .toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:#111827; color:#fff; padding:10px 16px;
+           border-radius:10px; font-size:14px; z-index:60; max-width:90vw; }
+  .toast.err { background:#dc2626; } .toast.ok { background:#059669; }
+  .readonly-note { font-size:12px; color:#b45309; background:#fffbeb; border:1px solid #fde68a; padding:6px 10px; border-radius:8px; margin-bottom:10px; }
+
+  @media (max-width:640px) {
+    :root { --label:120px; }
+    main { padding:8px; }
+    .controls { padding:8px; }
+    .ctl { flex:1 1 45%; }
+    .gantt-wrap { max-height:calc(100vh - 300px); }
+  }
+  .capture .gantt-wrap { max-height:none; overflow:visible; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><b>太綺</b>案場甘特圖</div>
+  <a href="index.html">← 回派工</a>
+</header>
+
+<main>
+  <div class="controls">
+    <div class="ctl" style="min-width:180px;">
+      <label>案場</label>
+      <select id="site-select"></select>
+    </div>
+    <div class="ctl"><label>起</label><input type="date" id="from"></div>
+    <div class="ctl"><label>迄</label><input type="date" id="to"></div>
+    <div class="ctl">
+      <label>快速區間</label>
+      <div class="quick">
+        <button class="btn btn-ghost" data-range="week">本週</button>
+        <button class="btn btn-ghost" data-range="2w">兩週</button>
+        <button class="btn btn-ghost" data-range="month">本月</button>
+        <button class="btn btn-ghost" data-range="next">下個月</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <label>格寬</label>
+      <select id="zoom">
+        <option value="12">窄（看長期）</option>
+        <option value="18" selected>標準</option>
+        <option value="28">寬（看細節）</option>
+      </select>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn btn-ghost" id="export-btn">另存圖片</button>
+    <button class="btn btn-primary" id="add-btn">＋ 新增工項</button>
+  </div>
+
+  <div id="readonly-note" class="readonly-note" style="display:none;"></div>
+  <div class="gantt-wrap" id="gantt-wrap"><div class="gantt" id="gantt"></div></div>
+  <div class="legend" id="legend"></div>
+</main>
+
+<!-- 工項表單 -->
+<div class="modal-bg" id="task-modal">
+  <div class="modal">
+    <h3 id="tm-title">新增工項</h3>
+    <input type="hidden" id="tm-id">
+    <div class="field"><label>案場</label><select id="tm-site"></select></div>
+    <div class="field"><label>工項名稱</label><input id="tm-name" placeholder="例：3F 給水配管、消防測試"></div>
+    <div class="row2">
+      <div class="field"><label>開始日期</label><input type="date" id="tm-start"></div>
+      <div class="field"><label>開始時段</label>
+        <div class="seg" id="tm-half"><button type="button" data-v="am" class="on">上午</button><button type="button" data-v="pm">下午</button></div>
+      </div>
+    </div>
+    <div class="field"><label>工期（天，可填 0.5）</label>
+      <input type="number" id="tm-days" min="0.5" step="0.5" value="1" inputmode="decimal"></div>
+    <div class="calc" id="tm-calc"></div>
+    <button type="button" class="btn btn-ghost btn-sm" id="tm-after" style="margin-bottom:10px;">⤷ 接在這個案場最後一個工項之後</button>
+    <div class="field"><label>完成進度：<b id="tm-progress-text">0%</b></label>
+      <input type="range" id="tm-progress" min="0" max="100" step="10" value="0" style="width:100%; padding:0;"></div>
+    <div class="field"><label>備註（選填）</label><textarea id="tm-note" rows="2"></textarea></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="tm-delete" style="display:none;">刪除</button>
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" id="tm-save">儲存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const COLORS = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#db2777', '#0891b2', '#65a30d', '#dc2626'];
+const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
+let me = JSON.parse(localStorage.getItem('TK_CURRENT_USER') || 'null');
+let state = { sites: [], tasks: [], groups: [] };
+let half = 'am';
+
+// ---------- 共用 ----------
+async function api(method, path, body) {
+  const opt = { method, headers: { 'Content-Type': 'application/json' } };
+  if (method === 'GET' || method === 'DELETE') path += (path.includes('?') ? '&' : '?') + 'phone=' + encodeURIComponent(me ? me.phone : '');
+  if (method !== 'GET' && method !== 'DELETE') opt.body = JSON.stringify({ ...(body || {}), phone: me ? me.phone : '' });
+  const res = await fetch(path, opt);
+  let d = null; try { d = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error((d && (d.message || d.error)) || `伺服器錯誤（${res.status}）`);
+  return d;
+}
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+function toast(msg, type) { const el = document.createElement('div'); el.className = 'toast ' + (type || ''); el.textContent = msg; document.body.appendChild(el); setTimeout(() => el.remove(), 2600); }
+function ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function parse(s) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); }
+function addDays(s, n) { const d = parse(s); d.setDate(d.getDate() + n); return ymd(d); }
+function dayDiff(a, b) { return Math.round((parse(b) - parse(a)) / 86400000); }
+function todayStr() { return ymd(new Date()); }
+function halfText(h) { return h === 'pm' ? '下午' : '上午'; }
+function fmtDays(halves) { return (halves / 2) + ' 天'; }
+
+// 開始＋半天數 → 結束（跟後端同一套算法）
+function endOf(start, startHalf, halves) {
+  const endSlot = (startHalf === 'pm' ? 1 : 0) + Math.max(1, halves) - 1;
+  return { date: addDays(start, Math.floor(endSlot / 2)), half: endSlot % 2 ? 'pm' : 'am' };
+}
+function canEdit(groupId) { return me && (me.role === 'admin' || me.group_id === groupId); }
+
+// ---------- 區間 ----------
+function setRange(kind) {
+  const t = new Date();
+  let from, to;
+  if (kind === 'week') { const d = new Date(t); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); from = ymd(d); to = addDays(from, 6); }
+  else if (kind === '2w') { const d = new Date(t); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); from = ymd(d); to = addDays(from, 13); }
+  else if (kind === 'month') { from = ymd(new Date(t.getFullYear(), t.getMonth(), 1)); to = ymd(new Date(t.getFullYear(), t.getMonth() + 1, 0)); }
+  else { from = ymd(new Date(t.getFullYear(), t.getMonth() + 1, 1)); to = ymd(new Date(t.getFullYear(), t.getMonth() + 2, 0)); }
+  document.getElementById('from').value = from;
+  document.getElementById('to').value = to;
+  saveView(); load();
+}
+document.querySelectorAll('[data-range]').forEach(b => b.addEventListener('click', () => setRange(b.dataset.range)));
+['from', 'to'].forEach(id => document.getElementById(id).addEventListener('change', () => {
+  const f = document.getElementById('from'), t = document.getElementById('to');
+  if (f.value && t.value && f.value > t.value) t.value = f.value;
+  if (dayDiff(f.value, t.value) > 180) { t.value = addDays(f.value, 180); toast('區間最多 180 天'); }
+  saveView(); load();
+}));
+document.getElementById('zoom').addEventListener('change', e => {
+  document.documentElement.style.setProperty('--slot', e.target.value + 'px'); saveView(); render();
+});
+document.getElementById('site-select').addEventListener('change', () => { saveView(); load(); });
+
+function saveView() {
+  localStorage.setItem('TK_GANTT_VIEW', JSON.stringify({
+    site: document.getElementById('site-select').value, from: document.getElementById('from').value,
+    to: document.getElementById('to').value, zoom: document.getElementById('zoom').value,
+  }));
+}
+
+// ---------- 載入 ----------
+async function load() {
+  const from = document.getElementById('from').value, to = document.getElementById('to').value;
+  const site = document.getElementById('site-select').value;
+  try {
+    const d = await api('GET', `/api/gantt?from=${from}&to=${to}${site ? '&site=' + encodeURIComponent(site) : ''}`);
+    state.tasks = d.tasks;
+    if (!state.sites.length) { state.sites = d.sites; fillSites(); }
+    render();
+  } catch (err) { toast(err.message, 'err'); }
+}
+
+function fillSites() {
+  const groups = [];
+  state.sites.forEach(s => { if (!groups.find(g => g.id === s.group_id)) groups.push({ id: s.group_id, name: s.group_name || '未分組' }); });
+  state.groups = groups;
+  const sel = document.getElementById('site-select');
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">全部案場</option>' + groups.map(g =>
+    `<optgroup label="${esc(g.name)}">${state.sites.filter(s => s.group_id === g.id).map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('')}</optgroup>`
+  ).join('');
+  if (keep) sel.value = keep;
+  document.getElementById('tm-site').innerHTML = sel.innerHTML.replace('<option value="">全部案場</option>', '');
+}
+
+function groupColor(groupId) {
+  const i = state.groups.findIndex(g => g.id === groupId);
+  return COLORS[(i < 0 ? 0 : i) % COLORS.length];
+}
+
+// ---------- 畫圖 ----------
+function render() {
+  const from = document.getElementById('from').value, to = document.getElementById('to').value;
+  const days = dayDiff(from, to) + 1;
+  const slot = parseInt(document.getElementById('zoom').value, 10);
+  const width = days * 2 * slot;
+  const today = todayStr();
+  const siteFilter = document.getElementById('site-select').value;
+
+  // 表頭：日期＋上下午
+  let head = `<div class="g-head"><div class="g-label-head">工項／工期</div><div class="g-scale" style="width:${width}px;">`;
+  for (let i = 0; i < days; i++) {
+    const ds = addDays(from, i), d = parse(ds), w = d.getDay();
+    const showMonth = i === 0 || d.getDate() === 1;
+    head += `<div class="g-day ${w === 6 ? 'wk-sat' : ''} ${w === 0 ? 'wk-sun' : ''} ${ds === today ? 'is-today' : ''}">
+      <div class="g-month">${showMonth ? (d.getMonth() + 1) + '月' : ''}</div>
+      <div class="d">${d.getDate()}</div><div>${WEEK[w]}</div>
+      <div class="halves"><span>${slot >= 16 ? '上' : ''}</span><span>${slot >= 16 ? '下' : ''}</span></div></div>`;
+  }
+  head += '</div></div>';
+
+  // 背景欄（週末底色、今天紅線）每一列共用同一段 HTML
+  let bg = '';
+  for (let i = 0; i < days; i++) {
+    const w = parse(addDays(from, i)).getDay();
+    if (w === 0 || w === 6) bg += `<div class="col ${w === 6 ? 'wk-sat' : 'wk-sun'}" style="left:${i * 2 * slot}px"></div>`;
+  }
+  const todayIdx = dayDiff(from, today);
+  if (todayIdx >= 0 && todayIdx < days) {
+    const nowHalf = new Date().getHours() >= 12 ? 1 : 0;
+    bg += `<div class="today" style="left:${(todayIdx * 2 + nowHalf) * slot}px"></div>`;
+  }
+
+  // 依案場分段
+  const sitesToShow = siteFilter ? state.sites.filter(s => s.name === siteFilter)
+    : state.sites.filter(s => state.tasks.some(t => t.site === s.name));
+  let body = '';
+  sitesToShow.forEach(site => {
+    const tasks = state.tasks.filter(t => t.site === site.name);
+    const editable = canEdit(site.group_id);
+    body += `<div class="g-site"><div class="g-label">📍 ${esc(site.name)}
+        <span style="font-size:11px; color:var(--faint); font-weight:400;">${esc(site.group_name || '')}</span>
+        ${editable ? `<button class="add" data-add="${esc(site.name)}">＋</button>` : ''}</div>
+      <div class="g-track" style="width:${width}px; height:28px;">${bg}</div></div>`;
+    if (!tasks.length) {
+      body += `<div class="g-row"><div class="g-label"><span class="m">這段期間沒有工項</span></div><div class="g-track" style="width:${width}px;">${bg}</div></div>`;
+    }
+    tasks.forEach(t => {
+      const startIdx = dayDiff(from, t.start_date) * 2 + (t.start_half === 'pm' ? 1 : 0);
+      const endIdx = startIdx + t.duration_halves;             // 不含
+      const left = Math.max(0, startIdx), right = Math.min(days * 2, endIdx);
+      const outL = startIdx < 0, outR = endIdx > days * 2;
+      const color = groupColor(t.group_id);
+      const end = endOf(t.start_date, t.start_half, t.duration_halves);
+      const tip = `${t.name}\n${t.start_date} ${halfText(t.start_half)} → ${end.date} ${halfText(end.half)}（${fmtDays(t.duration_halves)}）\n進度 ${t.progress}%${t.note ? '\n' + t.note : ''}`;
+      body += `<div class="g-row">
+        <div class="g-label" data-edit="${t.id}" title="${esc(tip)}">
+          <span class="n">${esc(t.name)}</span>
+          <span class="m">${t.start_date.slice(5)} ${halfText(t.start_half)}・${fmtDays(t.duration_halves)}${t.progress ? `・${t.progress}%` : ''}</span></div>
+        <div class="g-track" style="width:${width}px;">${bg}
+          ${right > left ? `<div class="bar ${outL ? 'out-left' : ''} ${outR ? 'out-right' : ''}" data-edit="${t.id}" title="${esc(tip)}"
+            style="left:${left * slot}px; width:${(right - left) * slot - 2}px; background:${color};">
+            <div class="fill" style="width:${t.progress}%"></div><span>${esc(t.name)}</span></div>` : ''}
+        </div></div>`;
+    });
+  });
+
+  const g = document.getElementById('gantt');
+  g.innerHTML = head + (body || `<div class="empty">${siteFilter ? '這個案場在此區間沒有工項' : '這段期間沒有任何工項，按右上角「新增工項」開始排程'}</div>`);
+  g.querySelectorAll('[data-edit]').forEach(el => el.addEventListener('click', () => openTask(+el.dataset.edit)));
+  g.querySelectorAll('[data-add]').forEach(el => el.addEventListener('click', () => openTask(null, el.dataset.add)));
+
+  document.getElementById('legend').innerHTML = state.groups.map(gr =>
+    `<span><i style="background:${groupColor(gr.id)}"></i>${esc(gr.name)}</span>`).join('')
+    + '<span><i style="background:#fef2f2; border:1px solid #fecaca;"></i>週日</span>'
+    + '<span><i style="background:var(--today)"></i>今天</span>'
+    + '<span>長條淡色部分＝已完成進度</span>';
+
+  // 第一次開啟時，自動捲到今天附近
+  const wrap = document.getElementById('gantt-wrap');
+  if (!wrap.dataset.scrolled && todayIdx > 3) { wrap.scrollLeft = (todayIdx - 2) * 2 * slot; wrap.dataset.scrolled = '1'; }
+}
+
+// ---------- 工項表單 ----------
+document.querySelectorAll('#tm-half button').forEach(b => b.addEventListener('click', () => { setHalf(b.dataset.v); updateCalc(); }));
+function setHalf(v) { half = v; document.querySelectorAll('#tm-half button').forEach(x => x.classList.toggle('on', x.dataset.v === v)); }
+['tm-start', 'tm-days'].forEach(id => document.getElementById(id).addEventListener('input', updateCalc));
+document.getElementById('tm-progress').addEventListener('input', e => { document.getElementById('tm-progress-text').textContent = e.target.value + '%'; });
+
+function halvesFromInput() { return Math.max(1, Math.round((parseFloat(document.getElementById('tm-days').value) || 0.5) * 2)); }
+function updateCalc() {
+  const s = document.getElementById('tm-start').value;
+  if (!s) { document.getElementById('tm-calc').textContent = ''; return; }
+  const h = halvesFromInput(), e = endOf(s, half, h);
+  document.getElementById('tm-calc').textContent = `${s} ${halfText(half)} 開始 → ${e.date} ${halfText(e.half)} 結束，共 ${fmtDays(h)}`;
+}
+
+// 接續：同案場裡結束最晚的工項，下一個半天開始
+document.getElementById('tm-after').addEventListener('click', async () => {
+  const site = document.getElementById('tm-site').value;
+  const editingId = +document.getElementById('tm-id').value || 0;
+  let list = state.tasks.filter(t => t.site === site && t.id !== editingId);
+  if (!list.length) {
+    // 目前畫面區間外可能還有，往前後各抓一年找
+    try {
+      const d = await api('GET', `/api/gantt?from=${addDays(todayStr(), -365)}&to=${addDays(todayStr(), 365)}&site=${encodeURIComponent(site)}`);
+      list = d.tasks.filter(t => t.id !== editingId);
+    } catch (e) {}
+  }
+  if (!list.length) return toast('這個案場還沒有其他工項');
+  const last = list.map(t => ({ t, e: endOf(t.start_date, t.start_half, t.duration_halves) }))
+    .sort((a, b) => (a.e.date + a.e.half).localeCompare(b.e.date + b.e.half)).pop();
+  if (last.e.half === 'am') { document.getElementById('tm-start').value = last.e.date; setHalf('pm'); }
+  else { document.getElementById('tm-start').value = addDays(last.e.date, 1); setHalf('am'); }
+  updateCalc();
+  toast(`已接在「${last.t.name}」之後`);
+});
+
+function openTask(id, presetSite) {
+  const t = id ? state.tasks.find(x => x.id === id) : null;
+  const siteName = t ? t.site : (presetSite || document.getElementById('site-select').value || (state.sites[0] && state.sites[0].name));
+  const site = state.sites.find(s => s.name === siteName);
+  const editable = site ? canEdit(site.group_id) : false;
+  if (!me) return login();
+  if (!t && !editable) return toast('只有這個案場所屬組別的主管或管理者可以新增工項', 'err');
+
+  document.getElementById('tm-title').textContent = t ? (editable ? '編輯工項' : '工項內容（唯讀）') : '新增工項';
+  document.getElementById('tm-id').value = t ? t.id : '';
+  document.getElementById('tm-site').value = siteName;
+  document.getElementById('tm-site').disabled = !!t;
+  document.getElementById('tm-name').value = t ? t.name : '';
+  document.getElementById('tm-start').value = t ? t.start_date : todayStr();
+  setHalf(t ? t.start_half : 'am');
+  document.getElementById('tm-days').value = t ? t.duration_halves / 2 : 1;
+  document.getElementById('tm-progress').value = t ? t.progress : 0;
+  document.getElementById('tm-progress-text').textContent = (t ? t.progress : 0) + '%';
+  document.getElementById('tm-note').value = t ? (t.note || '') : '';
+  document.getElementById('tm-delete').style.display = t && editable ? '' : 'none';
+  document.getElementById('tm-save').style.display = editable || !t ? '' : 'none';
+  document.getElementById('tm-after').style.display = editable ? '' : 'none';
+  updateCalc();
+  document.getElementById('task-modal').classList.add('show');
+}
+
+document.getElementById('add-btn').addEventListener('click', () => openTask(null));
+document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => document.getElementById('task-modal').classList.remove('show')));
+document.getElementById('task-modal').addEventListener('click', e => { if (e.target.id === 'task-modal') e.target.classList.remove('show'); });
+
+document.getElementById('tm-save').addEventListener('click', async () => {
+  const id = document.getElementById('tm-id').value;
+  const body = {
+    site: document.getElementById('tm-site').value,
+    name: document.getElementById('tm-name').value.trim(),
+    start_date: document.getElementById('tm-start').value,
+    start_half: half,
+    duration_halves: halvesFromInput(),
+    progress: parseInt(document.getElementById('tm-progress').value, 10) || 0,
+    note: document.getElementById('tm-note').value.trim(),
+  };
+  try {
+    if (id) await api('PUT', '/api/gantt/tasks/' + id, body);
+    else await api('POST', '/api/gantt/tasks', body);
+    document.getElementById('task-modal').classList.remove('show');
+    toast('已儲存', 'ok');
+    load();
+  } catch (err) { toast(err.message, 'err'); }
+});
+
+document.getElementById('tm-delete').addEventListener('click', async () => {
+  const id = document.getElementById('tm-id').value;
+  if (!confirm('確定刪除這個工項？')) return;
+  try { await api('DELETE', '/api/gantt/tasks/' + id); document.getElementById('task-modal').classList.remove('show'); toast('已刪除', 'ok'); load(); }
+  catch (err) { toast(err.message, 'err'); }
+});
+
+// ---------- 存圖 ----------
+document.getElementById('export-btn').addEventListener('click', async () => {
+  if (typeof html2canvas === 'undefined') return toast('圖片功能載入中，請稍後再試');
+  document.body.classList.add('capture');
+  try {
+    const canvas = await html2canvas(document.getElementById('gantt'), { backgroundColor: '#ffffff', scale: 2 });
+    const a = document.createElement('a');
+    const site = document.getElementById('site-select').value || '全部案場';
+    a.download = `甘特圖_${site}_${document.getElementById('from').value}_${document.getElementById('to').value}.jpg`;
+    a.href = canvas.toDataURL('image/jpeg', 0.92); a.click();
+  } catch (err) { toast('匯出失敗：' + err.message, 'err'); }
+  document.body.classList.remove('capture');
+});
+
+// ---------- 登入與啟動 ----------
+async function login() {
+  const phone = prompt('請輸入手機號碼登入（檢視不需要登入，新增與修改工項需要）：', '');
+  if (!phone) return false;
+  try {
+    const r = await api('POST', '/api/auth/lookup', { phone });
+    if (!r.found) { toast('查不到這組手機', 'err'); return false; }
+    me = { ...r.user, phone: phone.replace(/[^0-9]/g, '') };
+    localStorage.setItem('TK_CURRENT_USER', JSON.stringify(me));
+    updateNote(); render(); return true;
+  } catch (err) { toast(err.message, 'err'); return false; }
+}
+
+function updateNote() {
+  const n = document.getElementById('readonly-note');
+  if (!me) { n.style.display = ''; n.textContent = '目前是唯讀檢視。要新增或修改工項，請按「新增工項」並以手機登入。'; }
+  else if (me.role !== 'admin') { n.style.display = ''; n.textContent = `${me.name}：可以編輯自己組別的案場，其他組別為唯讀。`; }
+  else n.style.display = 'none';
+}
+
+(function init() {
+  const v = JSON.parse(localStorage.getItem('TK_GANTT_VIEW') || 'null');
+  if (v && v.from && v.to) {
+    document.getElementById('from').value = v.from;
+    document.getElementById('to').value = v.to;
+    document.getElementById('zoom').value = v.zoom || '18';
+  } else {
+    const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    document.getElementById('from').value = ymd(d);
+    document.getElementById('to').value = addDays(ymd(d), 13);
+  }
+  document.documentElement.style.setProperty('--slot', document.getElementById('zoom').value + 'px');
+  updateNote();
+  load().then(() => { if (v && v.site) { document.getElementById('site-select').value = v.site; load(); } });
+})();
+</script>
+</body>
+</html>

@@ -1,1 +1,90 @@
-# taichi-dispatch
+# 太綺派工通（後端）
+
+案場派工調度與排休系統，從 Google Apps Script + 試算表搬到 **Node.js + Express + PostgreSQL（Neon）**，部署於 Render。
+畫面沿用原本的 HTML，只把資料層換掉。
+
+## 為什麼要搬
+
+| 舊架構的問題 | 新架構 |
+|---|---|
+| 整份狀態塞在試算表單一儲存格（已達 6.3 萬字元，上限 5 萬／格） | 每人每天一列，沒有容量問題 |
+| 存檔用 no-cors 送出，再輪詢 8 次（0.5～4 秒）才知道成不成功 | 一般 REST 回應，實測 3～10 毫秒 |
+| 每次寫派工紀錄都要掃整張表（4,557 列、總覽 16,870 列） | 直接寫入資料表，筆數不影響速度 |
+| 衝突偵測只到「整份資料」層級，按強制覆蓋就蓋掉別人 | 衝突只比對「日期＋組別」，別組同時作業互不影響 |
+| 誰改的只能靠自己打的名字 | 手機號碼識別，每筆資料記錄更新人 |
+
+## 前端改了哪些地方
+
+畫面、派工卡片、月曆、LINE 文字、存圖、Excel 匯入全部沿用原本的 `index.html`，只換掉同步層：
+
+| 原本 | 現在 |
+|---|---|
+| `GOOGLE_SCRIPT_URL` + no-cors + 輪詢確認 | `/api/*` 一般 REST 呼叫 |
+| `fireSaveStateRequest`（整份狀態） | `saveGroupToServer`（一天一組） |
+| 待送出清單 dirty tracking | 防抖 0.8 秒的背景存檔佇列 |
+| 整份版本比對 | 每組每天版本號，衝突訊息會指名是誰改的 |
+| `sendAllGroupsDispatchLog_`（另寫派工紀錄分頁） | 不需要，`dispatch_entries` 本身就是紀錄 |
+| 操作人員自己打名字 | 開站以手機號碼登入，身分取自員工主檔 |
+| 本機快取保留 365 天 | 保留 30 天（正式資料都在資料庫） |
+
+切換日期只抓那一天、切換月份只抓那個月，資料量固定，不會越用越慢。
+
+## 資料表
+
+- `groups` / `sites` / `employees` / `leave_types`：主檔（原試算表的四個設定分頁）
+- `dispatch_entries`：每人每天一列（狀態、工數、案場、外借對象、原排假別）
+- `day_groups`：每組每天的鎖定狀態與版本號（衝突偵測用）
+- `temp_workers` / `subcontracts`：每日點工與發包
+- `leaves`：每人每天的假別
+- `audit_logs`：操作紀錄
+
+## 主要 API
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| POST | `/api/auth/lookup` | 手機號碼識別身分 |
+| GET | `/api/bootstrap?date=&month=` | 開站一次取得主檔＋當日派工＋當月排休 |
+| GET | `/api/day?date=` | 切換日期時只取那一天 |
+| GET | `/api/leaves?month=` | 取某個月排休 |
+| PUT | `/api/day-group` | 儲存某組某天的派工／點工／發包（帶 version 做衝突偵測） |
+| PUT | `/api/day-group/lock` | 鎖定／解鎖某組某天 |
+| PUT | `/api/leaves` | 儲存某人某月排休（自動同步派工狀態） |
+| PUT | `/api/leaves/bulk` | Excel 批量匯入排休 |
+| GET | `/api/export/*.csv?token=` | 給 Google 試算表 IMPORTDATA 用的唯讀匯出 |
+
+## 權限
+
+- `role = manager`：只能編輯自己組別的派工（跨組會被擋下）
+- `role = admin`：所有組別
+- 每筆資料都會記錄 `updated_by`，衝突時會顯示是誰改的
+
+## 試算表唯讀備份
+
+在 Google 試算表任一格貼上（把網址與 token 換成實際值）：
+
+```
+=IMPORTDATA("https://你的網址/api/export/dispatch.csv?token=你的EXPORT_TOKEN")
+```
+
+另外還有 `leaves.csv`（排休明細）與 `summary.csv`（案場 × 日期的本工／點工／發包工數）。
+Google 試算表約每小時自動重新抓取一次。**這個網址等於一把唯讀鑰匙，試算表請維持私人共用。**
+
+## 環境變數
+
+| 變數 | 說明 |
+|---|---|
+| `DATABASE_URL` | Neon 連線字串（必填） |
+| `EXPORT_TOKEN` | CSV 匯出用的隨機字串（不設就停用匯出） |
+| `PORT` | Render 自動注入 |
+
+## 首次啟動
+
+`groups` 是空的時候會自動匯入 `seeds/masters.json`（組別 5、案場 14、員工 14、假別 5）與
+`seeds/history.json`（舊系統排休 163 筆、派工紀錄 429 筆）。之後不會再覆蓋。
+
+**啟用手機登入前，要先幫主管填手機**（在 Neon 後台或之後的主檔頁面）：
+
+```sql
+UPDATE employees SET phone='09xxxxxxxx' WHERE name='楊庭芝';
+UPDATE employees SET phone='09xxxxxxxx', role='admin' WHERE name='賴柏翔';
+```

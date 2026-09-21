@@ -1,0 +1,157 @@
+{
+ "groups": [
+  {
+   "code": "tingzhi",
+   "name": "庭芝組",
+   "manager": "楊庭芝",
+   "title": "經理"
+  },
+  {
+   "code": "xianghao",
+   "name": "祥豪組",
+   "manager": "黃祥豪",
+   "title": "副理"
+  },
+  {
+   "code": "zhixuan",
+   "name": "志軒組",
+   "manager": "簡志軒",
+   "title": "副主任"
+  },
+  {
+   "code": "xinru",
+   "name": "信儒組",
+   "manager": "黃信儒",
+   "title": "副主任"
+  },
+  {
+   "code": "boxiang",
+   "name": "柏翔組",
+   "manager": "賴柏翔",
+   "title": "總經理"
+  }
+ ],
+ "sites": [
+  {
+   "name": "遠雄",
+   "group": "庭芝組"
+  },
+  {
+   "name": "榮泉",
+   "group": "祥豪組"
+  },
+  {
+   "name": "沐風",
+   "group": "祥豪組"
+  },
+  {
+   "name": "西苑",
+   "group": "祥豪組"
+  },
+  {
+   "name": "紀文娟",
+   "group": "志軒組"
+  },
+  {
+   "name": "環中路",
+   "group": "信儒組"
+  },
+  {
+   "name": "碧柳七",
+   "group": "信儒組"
+  },
+  {
+   "name": "崇德三",
+   "group": "信儒組"
+  },
+  {
+   "name": "V11",
+   "group": "柏翔組"
+  },
+  {
+   "name": "TSMC",
+   "group": "柏翔組"
+  },
+  {
+   "name": "漢口路火鍋店",
+   "group": "柏翔組"
+  },
+  {
+   "name": "裕毛屋",
+   "group": "柏翔組"
+  },
+  {
+   "name": "總公司",
+   "group": "柏翔組"
+  },
+  {
+   "name": "大雅倉庫",
+   "group": "柏翔組"
+  }
+ ],
+ "employees": [
+  {
+   "name": "蕭和賢",
+   "group": "庭芝組"
+  },
+  {
+   "name": "于振中",
+   "group": "庭芝組"
+  },
+  {
+   "name": "黃治翔",
+   "group": "庭芝組"
+  },
+  {
+   "name": "戴文廷",
+   "group": "庭芝組"
+  },
+  {
+   "name": "廖宣儒",
+   "group": "祥豪組"
+  },
+  {
+   "name": "蕭唐崙",
+   "group": "祥豪組"
+  },
+  {
+   "name": "徐子濬",
+   "group": "祥豪組"
+  },
+  {
+   "name": "何睿穎",
+   "group": "志軒組"
+  },
+  {
+   "name": "黃冠傑",
+   "group": "信儒組"
+  },
+  {
+   "name": "謝泰隆",
+   "group": "信儒組"
+  },
+  {
+   "name": "廖文祺",
+   "group": "柏翔組"
+  },
+  {
+   "name": "洪正坤",
+   "group": "柏翔組"
+  },
+  {
+   "name": "張朝傑",
+   "group": "柏翔組"
+  },
+  {
+   "name": "黃清松",
+   "group": "柏翔組"
+  }
+ ],
+ "leaveTypes": [
+  "例假",
+  "排休",
+  "特休",
+  "國定假",
+  "事病假"
+ ]
+}

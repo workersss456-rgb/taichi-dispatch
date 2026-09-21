@@ -1,0 +1,2559 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>太綺工程 - 智慧派工調度與員工排休系統</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@1.39.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas-pro@2.4.1/dist/html2canvas-pro.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700;900&display=swap');
+  body { font-family: 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-16">
+
+<!-- 頂部導覽列 -->
+<header class="bg-slate-900 text-white shadow-md sticky top-0 z-40">
+  <div class="max-w-7xl mx-auto px-3 sm:px-4 py-3 flex flex-wrap justify-between items-center gap-2">
+    <div class="flex items-center space-x-2.5">
+      <div class="bg-blue-600 px-2 py-1 rounded text-white font-black text-sm tracking-wider">太綺</div>
+      <div>
+        <h1 class="text-sm sm:text-base font-bold tracking-wide leading-tight" id="headerTitle">案場智慧派工與排休系統</h1>
+        <p class="text-[11px] text-slate-400 leading-none flex items-center gap-1.5 mt-0.5" id="headerSubText">
+          <span id="cloudStatusBadge" class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span id="cloudStatusText">系統就緒</span>
+          <span id="lastUpdateInfo" class="text-slate-500"></span>
+        </p>
+      </div>
+    </div>
+    
+    <!-- 主管專用操作區 -->
+    <div id="managerControls" class="flex flex-wrap items-center gap-2">
+      <div class="flex items-center bg-slate-800 rounded-xl p-1 border border-slate-700">
+        <button type="button" onclick="showShareUrlModal('leave')" class="px-2.5 py-1 text-xs font-bold rounded-lg text-amber-400 hover:bg-slate-700 active:bg-slate-600 transition flex items-center">
+          <i data-lucide="link" class="w-3.5 h-3.5 mr-1"></i> 取得員工排休連結
+        </button>
+        <button type="button" onclick="showShareUrlModal('manager')" class="px-2.5 py-1 text-xs font-bold rounded-lg text-blue-400 hover:bg-slate-700 active:bg-slate-600 transition flex items-center">
+          <i data-lucide="shield-check" class="w-3.5 h-3.5 mr-1"></i> 取得主管連結
+        </button>
+      </div>
+
+      <div class="flex items-center bg-slate-800 p-1 rounded-xl border border-slate-700">
+        <button onclick="switchTab('dispatch')" id="tabBtn_dispatch" class="px-3 py-1 text-xs font-bold rounded-lg bg-blue-600 text-white transition">
+          主管每日派工
+        </button>
+        <button onclick="switchTab('confirm')" id="tabBtn_confirm" class="px-3 py-1 text-xs font-bold rounded-lg text-slate-400 hover:text-white transition">
+          每日排班確認
+        </button>
+        <button onclick="switchTab('leave')" id="tabBtn_leave" class="px-3 py-1 text-xs font-bold rounded-lg text-slate-400 hover:text-white transition">
+          員工月曆排休
+        </button>
+        <button onclick="openApiSettingModal()" class="ml-1 px-2 py-1 text-xs text-slate-400 hover:text-white" title="設定操作人員姓名">
+          <i data-lucide="settings" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+
+      <button type="button" onclick="openImportLeaveModal()" class="bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold px-3 py-2 rounded-xl shadow transition flex items-center" title="批量匯入員工排班 Excel">
+        <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 mr-1"></i> 批量匯入排班
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- 設定分頁資料異常警告橫幅：案場設定／員工設定裡「所屬組別」對不到任何組別時顯示 -->
+<div id="configWarningBanner" class="hidden max-w-7xl mx-auto px-3 sm:px-4 pt-3">
+  <div class="bg-amber-50 border border-amber-300 text-amber-800 rounded-xl px-4 py-3 text-xs sm:text-sm space-y-1">
+    <div class="font-bold flex items-center"><i data-lucide="alert-triangle" class="w-4 h-4 mr-1.5"></i> 試算表設定分頁有幾筆資料需要修正：</div>
+    <ul id="configWarningList" class="list-disc pl-5 space-y-0.5"></ul>
+  </div>
+</div>
+
+<!-- 分頁一：主管每日派工調度頁面 -->
+<div id="view_dispatch" class="space-y-4">
+  <div class="max-w-7xl mx-auto px-3 sm:px-4 pt-4 flex flex-wrap justify-between items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="flex items-center bg-white rounded-xl px-3 py-1.5 shadow-sm border border-slate-200">
+        <i data-lucide="calendar" class="w-4 h-4 text-blue-600 mr-2"></i>
+        <span class="text-xs text-slate-500 font-bold mr-2">派工日期:</span>
+        <input type="date" id="dispatchDate" class="text-xs font-bold bg-transparent text-slate-800 focus:outline-none cursor-pointer">
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <button onclick="generateLineMessage('ALL')" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-2 rounded-xl shadow transition flex items-center">
+        <i data-lucide="layers" class="w-3.5 h-3.5 mr-1"></i> 全公司派工彙整
+      </button>
+      <button onclick="exportNodeAsJpg('dispatchExportArea', '每日派工_' + document.getElementById('dispatchDate').value)" class="bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold px-3 py-2 rounded-xl border border-slate-300 shadow-sm transition flex items-center">
+        <i data-lucide="image-down" class="w-3.5 h-3.5 mr-1 text-blue-600"></i> 另存圖片(jpg)
+      </button>
+    </div>
+  </div>
+
+  <main class="max-w-7xl mx-auto px-3 sm:px-4 space-y-4" id="dispatchExportArea">
+    <!-- 今日即時統計看板 -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4">
+      <div class="bg-white p-3 sm:p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
+        <div>
+          <p class="text-[11px] text-slate-500 font-medium">總編制本工</p>
+          <p class="text-xl sm:text-2xl font-black text-slate-800" id="totalMembers">22 人</p>
+        </div>
+        <div class="p-2.5 bg-blue-50 text-blue-600 rounded-lg"><i data-lucide="users" class="w-4 h-4 sm:w-5 sm:h-5"></i></div>
+      </div>
+      <div class="bg-white p-3 sm:p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
+        <div>
+          <p class="text-[11px] text-slate-500 font-medium">今日排休 / 請假</p>
+          <p class="text-xl sm:text-2xl font-black text-amber-600" id="totalOffCount">0 人</p>
+        </div>
+        <div class="p-2.5 bg-amber-50 text-amber-600 rounded-lg"><i data-lucide="calendar-x" class="w-4 h-4 sm:w-5 sm:h-5"></i></div>
+      </div>
+      <div class="bg-white p-3 sm:p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
+        <div>
+          <p class="text-[11px] text-slate-500 font-medium">今日出勤本工</p>
+          <p class="text-xl sm:text-2xl font-black text-emerald-600" id="totalWorkCount">0 工</p>
+        </div>
+        <div class="p-2.5 bg-emerald-50 text-emerald-600 rounded-lg"><i data-lucide="hard-hat" class="w-4 h-4 sm:w-5 sm:h-5"></i></div>
+      </div>
+      <div class="bg-white p-3 sm:p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
+        <div>
+          <p class="text-[11px] text-slate-500 font-medium">外部點工總計</p>
+          <p class="text-xl sm:text-2xl font-black text-purple-600" id="totalTempCount">0 工</p>
+        </div>
+        <div class="p-2.5 bg-purple-50 text-purple-600 rounded-lg"><i data-lucide="user-plus" class="w-4 h-4 sm:w-5 sm:h-5"></i></div>
+      </div>
+      <div class="bg-white p-3 sm:p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
+        <div>
+          <p class="text-[11px] text-slate-500 font-medium">今日發包人數</p>
+          <p class="text-xl sm:text-2xl font-black text-cyan-600" id="totalSubcontractCount">0 人</p>
+        </div>
+        <div class="p-2.5 bg-cyan-50 text-cyan-600 rounded-lg"><i data-lucide="hard-hat" class="w-4 h-4 sm:w-5 sm:h-5"></i></div>
+      </div>
+    </div>
+
+    <!-- 各組別派工卡片列表 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4" id="groupsContainer"></div>
+  </main>
+</div>
+
+<!-- 分頁二：每日排班確認總覽 -->
+<div id="view_confirm" class="hidden max-w-4xl mx-auto px-3 sm:px-4 pt-4 space-y-4">
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+      <h2 class="text-base font-bold text-slate-900 flex items-center">
+        <i data-lucide="calendar-check-2" class="w-5 h-5 text-blue-600 mr-2"></i> 每日排班確認
+      </h2>
+      <div class="flex items-center gap-2">
+        <button onclick="changeConfirmDate(-1)" class="p-2 bg-slate-100 hover:bg-slate-200 rounded-xl transition" title="前一天">
+          <i data-lucide="chevron-left" class="w-4 h-4 text-slate-700"></i>
+        </button>
+        <input type="date" id="confirmDate" onchange="onConfirmDateChange()" class="text-sm font-bold border border-slate-300 rounded-xl px-3 py-1.5 bg-slate-50 text-slate-800 focus:outline-none">
+        <button onclick="changeConfirmDate(1)" class="p-2 bg-slate-100 hover:bg-slate-200 rounded-xl transition" title="後一天">
+          <i data-lucide="chevron-right" class="w-4 h-4 text-slate-700"></i>
+        </button>
+        <button onclick="goToTodayConfirm()" class="px-2.5 py-1.5 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white rounded-xl transition">今天</button>
+        <button onclick="exportNodeAsJpg('confirmExportArea', '每日排班確認_' + document.getElementById('confirmDate').value)" class="px-2.5 py-1.5 text-xs font-bold bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl shadow-sm transition flex items-center">
+          <i data-lucide="image-down" class="w-3.5 h-3.5 mr-1 text-blue-600"></i> 另存圖片(jpg)
+        </button>
+      </div>
+    </div>
+
+    <div id="confirmExportArea" class="space-y-3">
+      <div class="text-center text-sm font-black text-slate-800 py-1" id="confirmDateLabel"></div>
+      <div class="grid grid-cols-3 gap-2.5 sm:gap-3">
+        <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-2.5 text-center">
+          <p class="text-[11px] text-emerald-700 font-bold">上班人數</p>
+          <p class="text-xl font-black text-emerald-700" id="confirmWorkCount">0</p>
+        </div>
+        <div class="bg-red-50 border border-red-100 rounded-xl p-2.5 text-center">
+          <p class="text-[11px] text-red-600 font-bold">例假人數</p>
+          <p class="text-xl font-black text-red-600" id="confirmRegDayOffCount">0</p>
+        </div>
+        <div class="bg-amber-50 border border-amber-100 rounded-xl p-2.5 text-center">
+          <p class="text-[11px] text-amber-700 font-bold">休假/請假人數</p>
+          <p class="text-xl font-black text-amber-700" id="confirmLeaveCount">0</p>
+        </div>
+      </div>
+      <div id="confirmGroupsContainer" class="space-y-3"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 分頁三：員工專用月曆排休專區 -->
+<div id="view_leave" class="hidden max-w-4xl mx-auto px-3 sm:px-4 pt-4 space-y-4">
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 space-y-4">
+    <div class="border-b border-slate-100 pb-3 flex flex-wrap justify-between items-center gap-3">
+      <div>
+        <h2 class="text-base font-bold text-slate-900 flex items-center">
+          <i data-lucide="calendar-days" class="w-5 h-5 text-blue-600 mr-2"></i> 員工整月休假填報專區
+        </h2>
+        <p class="text-xs text-slate-500">請選取姓名、年份與月份，點選假別後直接在日曆上點擊即可排休；如需新增/刪除同仁，請至「員工設定」試算表分頁編輯</p>
+      </div>
+      
+      <div class="flex flex-wrap items-center gap-2">
+        <select id="leaveMemberSelect" onchange="loadMemberMonthlyLeave()" class="text-xs font-bold border border-slate-300 rounded-xl px-3 py-2 bg-slate-50 text-blue-700 focus:outline-none min-w-[130px]">
+          <option value="">-- 請選擇姓名 --</option>
+        </select>
+
+        <div class="flex items-center space-x-1 bg-slate-50 border border-slate-300 rounded-xl px-2 py-1">
+          <select id="leaveYearSelect" onchange="onYearMonthChange()" class="text-xs font-black bg-transparent text-slate-800 focus:outline-none cursor-pointer">
+            <option value="2025">2025 年</option>
+            <option value="2026" selected>2026 年</option>
+            <option value="2027">2027 年</option>
+            <option value="2028">2028 年</option>
+          </select>
+          <span class="text-xs text-slate-300">|</span>
+          <select id="leaveMonthOnlySelect" onchange="onYearMonthChange()" class="text-xs font-black bg-transparent text-blue-700 focus:outline-none cursor-pointer">
+            <option value="01">1 月</option>
+            <option value="02">2 月</option>
+            <option value="03">3 月</option>
+            <option value="04">4 月</option>
+            <option value="05">5 月</option>
+            <option value="06">6 月</option>
+            <option value="07">7 月</option>
+            <option value="08">8 月</option>
+            <option value="09" selected>9 月</option>
+            <option value="10">10 月</option>
+            <option value="11">11 月</option>
+            <option value="12">12 月</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- 假別快捷切換工具列 -->
+    <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <span class="text-xs font-bold text-slate-700 flex items-center">
+          <i data-lucide="check-circle-2" class="w-4 h-4 mr-1 text-blue-600"></i> 當前筆刷假別（點選後直接點日曆設定）：
+        </span>
+        <span class="text-xs font-bold text-slate-600">
+          本月已排休天數：<span id="totalLeaveDaysBadge" class="text-blue-600 font-black text-sm">0</span> 天
+        </span>
+      </div>
+      
+      <div class="grid grid-cols-3 sm:grid-cols-6 gap-1.5 pt-1" id="leaveTypeButtonsContainer">
+        <!-- 假別筆刷按鈕由 renderLeaveTypeButtons() 依「假別設定」分頁動態產生 -->
+      </div>
+    </div>
+
+    <!-- 互動月曆容器 -->
+    <div id="calendarGrid" class="grid grid-cols-7 gap-1 sm:gap-2 text-center pt-2"></div>
+
+    <div class="pt-3 border-t border-slate-100 flex justify-end">
+      <button onclick="submitMonthlyLeave()" class="w-full sm:w-auto px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center justify-center">
+        <i data-lucide="send" class="w-4 h-4 mr-1.5"></i> 送出並儲存本月排休表
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="shareUrlModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+  <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl p-5 space-y-4">
+    <div class="flex justify-between items-center border-b pb-2">
+      <h3 class="font-bold text-slate-800 text-base flex items-center" id="shareModalTitle">
+        <i data-lucide="share-2" class="w-4 h-4 text-blue-600 mr-1.5"></i> 分享專屬連結
+      </h3>
+      <button onclick="closeShareUrlModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div class="space-y-2">
+      <p class="text-xs text-slate-500 font-medium" id="shareModalDesc">可以直接複製以下網址發送到 LINE 群組：</p>
+      <textarea id="shareUrlInput" rows="3" readonly class="w-full text-xs font-mono bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-slate-800 select-all focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+      <p class="text-[11px] text-emerald-600 font-bold hidden" id="shareCopySuccessText">✅ 已成功複製到剪貼簿！可直接貼至 LINE</p>
+    </div>
+    <div class="flex flex-wrap justify-between items-center gap-2 pt-2 border-t border-slate-100">
+      <a id="shareTestLink" href="#" target="_blank" class="text-xs text-blue-600 font-bold hover:underline flex items-center">
+        <i data-lucide="external-link" class="w-3.5 h-3.5 mr-1"></i> 直接開啟測試
+      </a>
+      <div class="flex space-x-2">
+        <button onclick="closeShareUrlModal()" class="px-3 py-1.5 border border-slate-300 text-slate-600 text-xs rounded-lg font-medium">關閉</button>
+        <button onclick="execCopyShareUrl()" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow transition flex items-center">
+          <i data-lucide="copy" class="w-3.5 h-3.5 mr-1"></i> 複製網址
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- LINE 產出 Modal 彈窗 -->
+<div id="lineModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden p-3 sm:p-4">
+  <div class="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div class="bg-slate-900 px-5 py-3.5 flex justify-between items-center text-white">
+      <div class="flex items-center space-x-2">
+        <i data-lucide="message-square" class="w-4 h-4 text-emerald-400"></i>
+        <h3 class="font-bold text-sm sm:text-base" id="modalTitle">派工通知 (LINE 複製格式)</h3>
+      </div>
+      <button onclick="closeModal()" class="text-slate-400 hover:text-white transition"><i data-lucide="x" class="w-5 h-5"></i></button>
+    </div>
+    
+    <!-- 預覽視圖切換標籤 -->
+    <div class="bg-slate-100 px-4 py-2 border-b border-slate-200 flex justify-between items-center">
+      <div class="flex space-x-1 bg-white p-1 rounded-lg border border-slate-200">
+        <button onclick="switchLinePreview('card')" id="lineTabBtn_card" class="px-3 py-1 text-xs font-bold rounded-md bg-emerald-600 text-white transition">
+          📱 條列美化預覽
+        </button>
+        <button onclick="switchLinePreview('raw')" id="lineTabBtn_raw" class="px-3 py-1 text-xs font-bold rounded-md text-slate-500 hover:text-slate-800 transition">
+          📄 LINE 純文字格式
+        </button>
+      </div>
+      <span class="text-[11px] text-slate-500">已自動同步至雲端後台</span>
+    </div>
+
+    <!-- 容器一：圖文卡片美化視覺版 -->
+    <div id="lineCardPreview" class="p-4 overflow-y-auto flex-1 bg-slate-50 space-y-3"></div>
+
+    <!-- 容器二：純文字格式版 (供複製用) -->
+    <div id="lineRawPreview" class="hidden p-4 overflow-y-auto flex-1 bg-slate-50">
+      <textarea id="lineTextOutput" rows="13" class="w-full bg-white border border-slate-300 rounded-xl p-3 text-xs sm:text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800" readonly></textarea>
+    </div>
+
+    <div class="bg-white px-4 py-3 border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-2">
+      <span class="text-xs text-slate-500" id="copyHint">點擊右側綠色按鈕即可一鍵複製純文字貼到 LINE</span>
+      <div class="flex space-x-2 w-full sm:w-auto justify-end">
+        <button onclick="closeModal()" class="px-3 py-1.5 border border-slate-300 hover:bg-slate-100 text-slate-600 rounded-lg text-xs font-medium transition">關閉</button>
+        <button onclick="copyToClipboard()" class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center shadow transition">
+          <i data-lucide="copy" class="w-3.5 h-3.5 mr-1"></i> 複製 LINE 文字
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- API 網址設定 Modal -->
+<div id="apiSettingModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+  <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl p-5 space-y-4">
+    <div class="flex justify-between items-center border-b pb-2">
+      <h3 class="font-bold text-slate-800 text-base flex items-center">
+        <i data-lucide="user" class="w-4 h-4 text-blue-600 mr-1.5"></i> 操作人員設定
+      </h3>
+      <button onclick="closeApiSettingModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div>
+      <label class="text-xs text-slate-600 font-bold mb-1 block">操作人員姓名（顯示在畫面上方「最後更新」旁，方便大家辨識是誰動過資料）:</label>
+      <input type="text" id="operatorNameInput" placeholder="例：王大明" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+    </div>
+    <div class="flex justify-end space-x-2 pt-2">
+      <button onclick="closeApiSettingModal()" class="px-3 py-1.5 border border-slate-300 text-slate-600 text-xs rounded-lg font-medium">取消</button>
+      <button onclick="saveApiSetting()" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow">儲存設定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 批量匯入員工排班 Modal -->
+<div id="importLeaveModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+  <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+    <div class="flex justify-between items-center border-b pb-2">
+      <h3 class="font-bold text-slate-800 text-base flex items-center">
+        <i data-lucide="file-spreadsheet" class="w-4 h-4 text-emerald-600 mr-1.5"></i> 批量匯入員工排班
+      </h3>
+      <button onclick="closeImportLeaveModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+
+    <div class="space-y-1">
+      <label class="text-xs text-slate-500 font-bold block">選擇要匯入的年月:</label>
+      <input type="month" id="importYearMonth" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+    </div>
+
+    <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+      <p class="text-xs font-bold text-slate-700 flex items-center">
+        <i data-lucide="download" class="w-3.5 h-3.5 text-emerald-600 mr-1"></i> 步驟一：下載空白範本
+      </p>
+      <p class="text-[11px] text-slate-500 leading-relaxed">範本已自動列出目前所有同仁姓名與該月每一天的欄位，人資只需在需要「休假」的日期格內填入假別代碼（例假／排休／特休／國定假／事病假），出勤日維持空白即可。</p>
+      <button onclick="downloadLeaveTemplate()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 rounded-lg shadow transition flex items-center justify-center">
+        <i data-lucide="file-down" class="w-3.5 h-3.5 mr-1.5"></i> 下載空白 Excel 範本
+      </button>
+    </div>
+
+    <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+      <p class="text-xs font-bold text-slate-700 flex items-center">
+        <i data-lucide="upload" class="w-3.5 h-3.5 text-blue-600 mr-1"></i> 步驟二：上傳填好的 Excel 匯入
+      </p>
+      <p class="text-[11px] text-slate-500 leading-relaxed">匯入後會直接覆蓋該月份「範本內姓名」的排休紀錄，並自動儲存到本機與雲端後台，網站畫面也會立即同步更新。</p>
+      <input type="file" id="importLeaveFileInput" accept=".xlsx,.xls" onchange="handleLeaveImportFile(event)" class="w-full text-xs border border-slate-300 rounded-lg px-2 py-2 bg-white file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-blue-600 file:text-white file:text-xs file:font-bold">
+    </div>
+
+    <div class="flex justify-end pt-1">
+      <button onclick="closeImportLeaveModal()" class="px-4 py-1.5 border border-slate-300 text-slate-600 text-xs rounded-lg font-medium">關閉</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function getTomorrowDateString() {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const yyyy = tomorrow.getFullYear();
+  const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
+  const dd = String(tomorrow.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+document.getElementById("dispatchDate").value = localStorage.getItem("TK_LAST_DISPATCH_DATE") || getTomorrowDateString();
+
+const DEFAULT_SAVED_TEMP_WORKERS = ["粗工-阿強", "水電-老李", "油漆-陳師傅", "泥作-阿明", "粗工-大寶"];
+
+// 組織架構（組別/案場/員工）與假別清單，改由 Google 試算表的設定分頁提供，
+// 這裡的空陣列只是「雲端資料還沒載入完成前」的暫時畫面，一開機就會被 loadStateFromCloud() 覆蓋成真正的資料。
+let GROUPS_DATA = JSON.parse(localStorage.getItem("TK_GROUPS_DATA_PROD")) || [];
+let LEAVE_TYPES = JSON.parse(localStorage.getItem("TK_LEAVE_TYPES")) || ["例假", "排休", "特休", "國定假", "事病假"];
+let CONFIG_WARNINGS = [];
+let SAVED_TEMP_WORKERS = JSON.parse(localStorage.getItem("TK_SAVED_TEMP_WORKERS_PROD")) || DEFAULT_SAVED_TEMP_WORKERS;
+let SUBCONTRACT_DATA = JSON.parse(localStorage.getItem("TK_SUBCONTRACT_DATA")) || {};
+let DAILY_TEMP_WORKERS = JSON.parse(localStorage.getItem("TK_DAILY_TEMP_WORKERS")) || {};
+// 資料改存在自家後端（Node + PostgreSQL），同網域呼叫，不再經過 Google Apps Script。
+const API_BASE = "";
+let CURRENT_USER = JSON.parse(localStorage.getItem("TK_CURRENT_USER") || "null");  // { name, group_id, role }
+let GROUP_VERSIONS = {};   // { "YYYY-MM-DD": { groupId: { version, updatedBy, updatedAt } } }
+
+async function api(method, path, body) {
+  const opt = { method, headers: { "Content-Type": "application/json" } };
+  if (body !== undefined) opt.body = JSON.stringify(body);
+  const res = await fetch(API_BASE + path, opt);
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* 無內容 */ }
+  if (!res.ok) {
+    const err = new Error((data && (data.message || data.error)) || `伺服器錯誤（${res.status}）`);
+    err.code = data && data.error;
+    err.payload = data;
+    throw err;
+  }
+  return data;
+}
+
+function getVersion(date, groupId) {
+  return (GROUP_VERSIONS[date] && GROUP_VERSIONS[date][groupId]) ? GROUP_VERSIONS[date][groupId].version : null;
+}
+function setVersion(date, groupId, info) {
+  if (!GROUP_VERSIONS[date]) GROUP_VERSIONS[date] = {};
+  GROUP_VERSIONS[date][groupId] = info;
+}
+
+let MONTHLY_LEAVES_DB = JSON.parse(localStorage.getItem("TK_MONTHLY_LEAVES_DB")) || {};
+
+let currentDispatch = {};
+let DAILY_DISPATCH_DATA = JSON.parse(localStorage.getItem("TK_DAILY_DISPATCH_DATA")) || {};
+let activeLeaveTypeBrush = "";
+
+// 舊版的「待送出清單」已經不需要了：現在每次存檔就是送「這一天這一組」，
+// 後端一列一列寫入，沒有整包傳輸的問題。
+function markCurrentDateDirtyForCommit_() { /* 保留空函式，維持舊有呼叫點不報錯 */ }
+
+// ===== 假別顏色統一定義（員工月曆排休 與 主管每日派工 都呼叫這裡，確保顏色永遠一致） =====
+// 假別清單改由「假別設定」試算表分頁提供（LEAVE_TYPES），顏色依清單順序自動從調色盤指派，
+// 不用再手動維護每個假別名稱對應的顏色。
+const LEAVE_TYPE_COLOR_PALETTE = [
+  { badge: "bg-red-50 border-red-300 text-red-600", select: "bg-red-50 text-red-700 border-red-200", button: "text-red-600 border-red-200" },
+  { badge: "bg-amber-50 border-amber-300 text-amber-600", select: "bg-amber-50 text-amber-700 border-amber-200", button: "text-amber-600 border-amber-200" },
+  { badge: "bg-purple-50 border-purple-300 text-purple-600", select: "bg-purple-50 text-purple-700 border-purple-200", button: "text-purple-600 border-purple-200" },
+  { badge: "bg-blue-50 border-blue-300 text-blue-600", select: "bg-blue-50 text-blue-700 border-blue-200", button: "text-blue-600 border-blue-200" },
+  { badge: "bg-rose-50 border-rose-300 text-rose-600", select: "bg-rose-50 text-rose-700 border-rose-200", button: "text-rose-600 border-rose-200" },
+  { badge: "bg-emerald-50 border-emerald-300 text-emerald-600", select: "bg-emerald-50 text-emerald-700 border-emerald-200", button: "text-emerald-600 border-emerald-200" },
+  { badge: "bg-cyan-50 border-cyan-300 text-cyan-600", select: "bg-cyan-50 text-cyan-700 border-cyan-200", button: "text-cyan-600 border-cyan-200" },
+  { badge: "bg-indigo-50 border-indigo-300 text-indigo-600", select: "bg-indigo-50 text-indigo-700 border-indigo-200", button: "text-indigo-600 border-indigo-200" }
+];
+// 沒有指定假別（例如手動點「休假/請假」但沒選類型）時的預設顏色
+const LEAVE_TYPE_COLOR_DEFAULT = { badge: "bg-amber-50 border-amber-300 text-amber-700", select: "bg-amber-50 text-amber-700 border-amber-200" };
+
+let LEAVE_TYPE_COLOR_MAP = {};
+function rebuildLeaveTypeColorMap() {
+  LEAVE_TYPE_COLOR_MAP = {};
+  LEAVE_TYPES.forEach((type, idx) => {
+    LEAVE_TYPE_COLOR_MAP[type] = LEAVE_TYPE_COLOR_PALETTE[idx % LEAVE_TYPE_COLOR_PALETTE.length];
+  });
+}
+rebuildLeaveTypeColorMap();
+
+function getLeaveTypeColor(leaveType, kind) {
+  const entry = LEAVE_TYPE_COLOR_MAP[leaveType] || LEAVE_TYPE_COLOR_DEFAULT;
+  return entry[kind || "badge"];
+}
+
+// 顯示／隱藏「試算表設定分頁有資料對不到組別」的警告橫幅
+function renderConfigWarningsBanner() {
+  const banner = document.getElementById("configWarningBanner");
+  const list = document.getElementById("configWarningList");
+  if (!banner || !list) return;
+  if (!CONFIG_WARNINGS || CONFIG_WARNINGS.length === 0) {
+    banner.classList.add("hidden");
+    list.innerHTML = "";
+    return;
+  }
+  list.innerHTML = CONFIG_WARNINGS.map(w => `<li>${w}</li>`).join('');
+  banner.classList.remove("hidden");
+  lucide.createIcons();
+}
+
+let cloudSyncInFlight = false;
+let localEditedDuringSync = false;
+
+// ===== 需求3：多裝置同時操作防呆 + 存檔確認機制 =====
+// SERVER_STATE_VERSION：這台裝置目前手上資料對應到「雲端最後一次存檔」的時間戳記。
+// 每次讀取雲端(loadStateFromCloud)或成功存檔(commitStateToCloud)後都會更新這個值；
+// 之後要做「正式存檔」動作時，會把這個版本一起送給後端比對，藉此判斷存檔的當下
+// 是否已經有其他裝置搶先存過一次新的了。
+let SERVER_STATE_VERSION = null;
+let LAST_UPDATE_META = null; // { updatedAt, updatedBy }
+
+function getOperatorName(fallback) {
+  return localStorage.getItem("TK_OPERATOR_NAME") || fallback || "";
+}
+
+function formatUpdateTime(ts) {
+  if (!ts) return "";
+  const d = new Date(Number(ts));
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${mm}/${dd} ${hh}:${mi}`;
+}
+
+function updateLastUpdateDisplay(meta) {
+  if (meta) LAST_UPDATE_META = meta;
+  const el = document.getElementById("lastUpdateInfo");
+  if (!el) return;
+  if (!LAST_UPDATE_META || !LAST_UPDATE_META.updatedAt) {
+    el.innerText = "";
+    return;
+  }
+  el.innerText = `｜最後更新：${LAST_UPDATE_META.updatedBy || "未具名使用者"} 於 ${formatUpdateTime(LAST_UPDATE_META.updatedAt)}`;
+}
+
+function cacheToLocalStorage_() {
+  localStorage.setItem("TK_GROUPS_DATA_PROD", JSON.stringify(GROUPS_DATA));
+  localStorage.setItem("TK_SAVED_TEMP_WORKERS_PROD", JSON.stringify(SAVED_TEMP_WORKERS));
+  localStorage.setItem("TK_MONTHLY_LEAVES_DB", JSON.stringify(MONTHLY_LEAVES_DB));
+  localStorage.setItem("TK_SUBCONTRACT_DATA", JSON.stringify(SUBCONTRACT_DATA));
+  localStorage.setItem("TK_DAILY_TEMP_WORKERS", JSON.stringify(DAILY_TEMP_WORKERS));
+  localStorage.setItem("TK_DAILY_DISPATCH_DATA", JSON.stringify(DAILY_DISPATCH_DATA));
+}
+
+// 每個小操作都會呼叫這裡：先寫本機快取（畫面不用等），再排入背景存檔。
+// 只送「目前這一天、使用者有權限的組別」，資料量固定，不會越用越慢。
+function saveDataToLocalStorage() {
+  if (cloudSyncInFlight) localEditedDuringSync = true;
+  cacheToLocalStorage_();
+  const date = document.getElementById("dispatchDate") ? document.getElementById("dispatchDate").value : null;
+  if (!date || !CURRENT_USER) return;
+  GROUPS_DATA.forEach(g => {
+    if (CURRENT_USER.role === "admin" || CURRENT_USER.group_id === g.id) scheduleAutoSave(date, g.id);
+  });
+}
+
+// ===== 同步層（改打自家後端 API） =====
+// 舊版是「整份狀態塞一格 JSON、no-cors 送出、再輪詢 8 次確認」，所以存一次檔要 0.5～4 秒，
+// 而且衝突偵測只到「整份資料」這一層，一按強制覆蓋就會蓋掉別組的異動。
+// 現在以「日期＋組別」為單位送出，後端即時回應，衝突也只鎖到同一組同一天。
+
+function buildGroupPayload_(date, groupId) {
+  const state = currentDispatch[groupId] || (DAILY_DISPATCH_DATA[date] || {})[groupId];
+  if (!state) return null;
+  return {
+    phone: CURRENT_USER ? CURRENT_USER.phone : "",
+    date, groupId,
+    version: getVersion(date, groupId),
+    managerStatus: state.managerStatus,
+    memberStatus: state.memberStatus,
+    tempWorkers: (DAILY_TEMP_WORKERS[date] || {})[groupId] || [],
+    subcontracts: (SUBCONTRACT_DATA[date] || {})[groupId] || [],
+    locked: !!state.locked,
+  };
+}
+
+async function saveGroupToServer(date, groupId, force) {
+  const payload = buildGroupPayload_(date, groupId);
+  if (!payload) return { ok: true };
+  if (force) payload.force = true;
+  try {
+    const result = await api("PUT", "/api/day-group", payload);
+    setVersion(date, groupId, { version: result.version, updatedBy: result.updatedBy, updatedAt: result.updatedAt });
+    updateLastUpdateDisplay({ updatedAt: result.updatedAt, updatedBy: result.updatedBy });
+    updateCloudBadge(true);
+    return { ok: true };
+  } catch (err) {
+    if (["conflict", "locked", "forbidden"].includes(err.code)) return { ok: false, reason: err.code, info: err.payload, groupId };
+    updateCloudBadge(false);
+    return { ok: false, reason: "network", error: err };
+  }
+}
+
+// 背景自動存檔（防抖 0.8 秒）：連續操作不會每點一下就送一次
+let autoSaveTimer = null;
+const pendingGroups = new Set();   // "日期|組別"
+
+function scheduleAutoSave(date, groupId) {
+  pendingGroups.add(date + "|" + groupId);
+  if (autoSaveTimer) clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(flushAutoSave, 800);
+}
+
+async function flushAutoSave() {
+  if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+  const keys = [...pendingGroups];
+  pendingGroups.clear();
+  for (const key of keys) {
+    const [date, groupId] = key.split("|");
+    const r = await saveGroupToServer(date, groupId);
+    // 背景存檔遇到衝突或鎖定不打斷操作，留著等使用者按「儲存」時正式處理
+    if (!r.ok && (r.reason === "conflict" || r.reason === "locked")) pendingGroups.add(key);
+  }
+}
+
+// 正式送出（儲存 / 產出 LINE 文字）：等後端確認，衝突時問使用者要不要覆蓋
+async function ensureSavedBeforeProceed(groupIdOrNull) {
+  if (!CURRENT_USER) { alert("請先以手機號碼登入再儲存！"); return false; }
+  const date = document.getElementById("dispatchDate").value;
+  const targets = groupIdOrNull ? [groupIdOrNull] : GROUPS_DATA.map(g => g.id);
+  pendingGroups.clear();
+  if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+
+  for (const groupId of targets) {
+    if (CURRENT_USER.role !== "admin" && CURRENT_USER.group_id !== groupId) continue;
+    let r = await saveGroupToServer(date, groupId);
+    if (r.ok) continue;
+
+    if (r.reason === "conflict") {
+      const g = GROUPS_DATA.find(x => x.id === groupId);
+      const who = (r.info && r.info.updatedBy) || "其他使用者";
+      const when = (r.info && r.info.updatedAt) ? formatUpdateTime(r.info.updatedAt) : "剛剛";
+      const wantForce = confirm(
+        "⚠️【" + (g ? g.name : groupId) + "】" + date + " 的派工已被【" + who + "】於 " + when + " 更新過。\n\n" +
+        "按「確定」＝用我畫面上的內容覆蓋對方的異動。\n" +
+        "按「取消」＝先不存檔，改抓最新資料回來看。"
+      );
+      if (wantForce) {
+        r = await saveGroupToServer(date, groupId, true);
+        if (r.ok) continue;
+      } else {
+        await reloadCurrentDay();
+        return false;
+      }
+    }
+
+    if (r.reason === "locked") { alert("🔒 這組今天的排班已鎖定，請先解鎖再儲存。"); return false; }
+    if (r.reason === "forbidden") { alert("⛔ " + ((r.info && r.info.message) || "沒有權限編輯這一組")); return false; }
+    if (!r.ok) { alert("⚠️ 儲存失敗，請確認網路連線後再試一次！"); return false; }
+  }
+  return true;
+}
+
+// 重新抓目前這一天（含別人剛存的內容）
+async function reloadCurrentDay() {
+  const date = document.getElementById("dispatchDate").value;
+  try {
+    const d = await api("GET", "/api/day?date=" + date);
+    DAILY_DISPATCH_DATA[date] = d.dispatch || {};
+    DAILY_TEMP_WORKERS[date] = d.tempWorkers || {};
+    SUBCONTRACT_DATA[date] = d.subcontracts || {};
+    GROUP_VERSIONS[date] = d.versions || {};
+    if (d.lastUpdate) updateLastUpdateDisplay(d.lastUpdate);
+    cacheToLocalStorage_();
+    initDispatchState();
+    renderUI();
+    if (!document.getElementById("view_confirm").classList.contains("hidden")) renderConfirmView();
+    updateCloudBadge(true);
+  } catch (err) {
+    console.warn("重新讀取當日資料失敗：", err);
+    updateCloudBadge(false);
+  }
+}
+
+// 確保某個月的排休已載入（月曆與派工狀態都會用到）
+async function ensureLeaveMonthLoaded(month, force) {
+  if (!force && MONTHLY_LEAVES_DB[month]) return;
+  try {
+    const d = await api("GET", "/api/leaves?month=" + month);
+    MONTHLY_LEAVES_DB[month] = d.leaves || {};
+    cacheToLocalStorage_();
+  } catch (err) {
+    console.warn("讀取排休失敗：", err);
+  }
+}
+
+// 開站：一次取得主檔＋當日派工＋當月排休
+async function loadStateFromCloud() {
+  cloudSyncInFlight = true;
+  localEditedDuringSync = false;
+  try {
+    const date = document.getElementById("dispatchDate").value;
+    const data = await api("GET", "/api/bootstrap?date=" + date + "&month=" + date.substring(0, 7));
+    if (localEditedDuringSync) {
+      console.warn("讀取期間偵測到本機已有新操作，放棄套用這次的快照。");
+      return;
+    }
+    if (Array.isArray(data.groupsData)) GROUPS_DATA = data.groupsData;
+    if (Array.isArray(data.leaveTypes) && data.leaveTypes.length) {
+      LEAVE_TYPES = data.leaveTypes;
+      rebuildLeaveTypeColorMap();
+      localStorage.setItem("TK_LEAVE_TYPES", JSON.stringify(LEAVE_TYPES));
+    }
+    CONFIG_WARNINGS = Array.isArray(data.configWarnings) ? data.configWarnings : [];
+    renderConfigWarningsBanner();
+    if (data.savedTempWorkers) SAVED_TEMP_WORKERS = data.savedTempWorkers;
+    Object.assign(DAILY_DISPATCH_DATA, data.dailyDispatchData || {});
+    Object.assign(DAILY_TEMP_WORKERS, data.dailyTempWorkers || {});
+    Object.assign(SUBCONTRACT_DATA, data.subcontractData || {});
+    Object.assign(MONTHLY_LEAVES_DB, data.monthlyLeavesDb || {});
+    GROUP_VERSIONS[data.date] = data.versions || {};
+    if (data.lastUpdate) updateLastUpdateDisplay(data.lastUpdate);
+    cacheToLocalStorage_();
+    updateCloudBadge(true);
+  } catch (err) {
+    console.warn("讀取後端資料失敗，暫時使用本機快取：", err);
+    updateCloudBadge(false);
+  } finally {
+    cloudSyncInFlight = false;
+  }
+}
+
+// 截圖前：把 <select>/<input> 這類瀏覽器原生控制項換成外觀相同的純文字 <span>，
+// 因為 html2canvas 沒辦法正確畫出原生控制項內的文字，換成純文字後截圖才不會出現虛線亂碼。
+function swapFormControlsForCapture(node) {
+  const swapped = [];
+
+  node.querySelectorAll("select").forEach(sel => {
+    const opt = (sel.selectedOptions && sel.selectedOptions[0]) || sel.options[sel.selectedIndex];
+    const span = document.createElement("span");
+    span.textContent = opt ? opt.text : (sel.value || "");
+    span.className = sel.className;
+    span.style.cssText = window.getComputedStyle(sel).cssText;
+    span.style.display = "inline-flex";
+    span.style.alignItems = "center";
+    span.setAttribute("data-tk-capture-clone", "1");
+    sel.insertAdjacentElement("beforebegin", span);
+    sel.style.visibility = "hidden";
+    sel.style.position = "absolute";
+    sel.style.pointerEvents = "none";
+    swapped.push({ original: sel, clone: span, origStyleCssText: sel.getAttribute("style") || "" });
+  });
+
+  node.querySelectorAll('input[type="text"], input[type="date"], input[type="number"]').forEach(inp => {
+    const span = document.createElement("span");
+    span.textContent = inp.value || "";
+    span.className = inp.className;
+    span.style.cssText = window.getComputedStyle(inp).cssText;
+    span.style.display = "inline-flex";
+    span.style.alignItems = "center";
+    span.setAttribute("data-tk-capture-clone", "1");
+    inp.insertAdjacentElement("beforebegin", span);
+    inp.style.visibility = "hidden";
+    inp.style.position = "absolute";
+    inp.style.pointerEvents = "none";
+    swapped.push({ original: inp, clone: span, origStyleCssText: inp.getAttribute("style") || "" });
+  });
+
+  return swapped;
+}
+
+function restoreFormControlsAfterCapture(swapped) {
+  swapped.forEach(({ original, clone, origStyleCssText }) => {
+    if (origStyleCssText) original.setAttribute("style", origStyleCssText);
+    else original.removeAttribute("style");
+    clone.remove();
+  });
+}
+
+// 另存目前畫面為 jpg 圖片，方便直接傳到 LINE 群組
+async function exportNodeAsJpg(elementId, filename) {
+  const node = document.getElementById(elementId);
+  if (!node || typeof html2canvas === "undefined") {
+    alert("圖片匯出功能載入中，請稍後再試一次！");
+    return;
+  }
+  let swapped = [];
+  try {
+    if (document.fonts && document.fonts.ready) {
+      await document.fonts.ready;
+    }
+    swapped = swapFormControlsForCapture(node);
+    // 讓瀏覽器有機會完成一次重繪，確保置換後的文字節點已經上樹
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const canvas = await html2canvas(node, { backgroundColor: "#f8fafc", scale: 2, useCORS: true });
+    const link = document.createElement("a");
+    link.download = (filename || "太綺工程派工表") + ".jpg";
+    link.href = canvas.toDataURL("image/jpeg", 0.92);
+    link.click();
+  } catch (err) {
+    alert("圖片匯出失敗，請稍後再試：" + err);
+  } finally {
+    restoreFormControlsAfterCapture(swapped);
+  }
+}
+
+function getAllSitesList() {
+  let list = [];
+  GROUPS_DATA.forEach(g => list.push(...g.sites));
+  return [...new Set(list)];
+}
+
+function getAllMembersList() {
+  let list = [];
+  GROUPS_DATA.forEach(g => {
+    list.push(g.managerName);
+    list.push(...g.members);
+  });
+  return list;
+}
+
+function getSelectedLeaveYearMonth() {
+  const y = document.getElementById("leaveYearSelect").value;
+  const m = document.getElementById("leaveMonthOnlySelect").value;
+  return `${y}-${m}`;
+}
+
+async function onYearMonthChange() {
+  await ensureLeaveMonthLoaded(getSelectedLeaveYearMonth());
+  loadMemberMonthlyLeave();
+}
+
+// 連結分享 Modal
+function showShareUrlModal(type) {
+  const currentUrl = window.location.href.split('?')[0];
+  let targetUrl = currentUrl;
+  let title = "";
+  let desc = "";
+
+  if (type === 'leave') {
+    targetUrl += '?tab=leave';
+    title = "員工月曆排休專用連結";
+    desc = "此連結已自動鎖定「員工排休專區」，已隱藏案場管理與派工功能，可放心發給員工填報：";
+  } else {
+    title = "主管每日派工管理專用連結";
+    desc = "此連結具備案場派工、跨組調派、點工與全公司工數看板權限，供主管管理使用：";
+  }
+
+  document.getElementById("shareModalTitle").innerHTML = `<i data-lucide="share-2" class="w-4 h-4 text-blue-600 mr-1.5"></i> ${title}`;
+  document.getElementById("shareModalDesc").innerText = desc;
+  
+  const input = document.getElementById("shareUrlInput");
+  input.value = targetUrl;
+  
+  const testLink = document.getElementById("shareTestLink");
+  testLink.href = targetUrl;
+
+  document.getElementById("shareCopySuccessText").classList.add("hidden");
+  document.getElementById("shareUrlModal").classList.remove("hidden");
+  lucide.createIcons();
+
+  setTimeout(() => {
+    input.focus();
+    input.select();
+  }, 100);
+}
+
+function closeShareUrlModal() {
+  document.getElementById("shareUrlModal").classList.add("hidden");
+}
+
+function execCopyShareUrl() {
+  const input = document.getElementById("shareUrlInput");
+  input.select();
+  input.setSelectionRange(0, 99999);
+
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(input.value);
+    } else {
+      document.execCommand("copy");
+    }
+    document.getElementById("shareCopySuccessText").classList.remove("hidden");
+  } catch (err) {
+    document.getElementById("shareCopySuccessText").innerText = "已全選網址，請長按文字點選「拷貝」！";
+    document.getElementById("shareCopySuccessText").classList.remove("hidden");
+  }
+}
+
+// 分頁切換
+function switchTab(tab) {
+  const views = { dispatch: "view_dispatch", confirm: "view_confirm", leave: "view_leave" };
+  const btns = { dispatch: "tabBtn_dispatch", confirm: "tabBtn_confirm", leave: "tabBtn_leave" };
+
+  Object.keys(views).forEach(key => {
+    const isActive = key === tab;
+    document.getElementById(views[key]).classList.toggle("hidden", !isActive);
+    document.getElementById(btns[key]).className = isActive
+      ? "px-3 py-1 text-xs font-bold rounded-lg bg-blue-600 text-white transition"
+      : "px-3 py-1 text-xs font-bold rounded-lg text-slate-400 hover:text-white transition";
+  });
+
+  if (tab === 'dispatch') {
+    initDispatchState();
+    renderUI();
+  } else if (tab === 'confirm') {
+    if (!document.getElementById("confirmDate").value) {
+      document.getElementById("confirmDate").value = document.getElementById("dispatchDate").value || getTomorrowDateString();
+    }
+    renderConfirmView();
+  } else {
+    renderLeaveTypeButtons();
+    initLeaveMemberSelect();
+    loadMemberMonthlyLeave();
+  }
+  lucide.createIcons();
+}
+
+// 每日排班確認：左右換日
+function changeConfirmDate(delta) {
+  const input = document.getElementById("confirmDate");
+  const d = new Date(input.value + "T00:00:00");
+  d.setDate(d.getDate() + delta);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  input.value = `${yyyy}-${mm}-${dd}`;
+  renderConfirmView();
+}
+
+function onConfirmDateChange() { renderConfirmView(); }
+
+function goToTodayConfirm() {
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, '0');
+  document.getElementById("confirmDate").value = `${yyyy}-${mm}-${dd}`;
+  renderConfirmView();
+}
+
+const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
+
+// 渲染每日排班確認總覽（誰上班/誰休假/誰例假）
+function renderConfirmView() {
+  const dateStr = document.getElementById("confirmDate").value;
+  if (!dateStr) return;
+  const yearMonth = dateStr.substring(0, 7);
+  const monthData = MONTHLY_LEAVES_DB[yearMonth] || {};
+  const dObj = new Date(dateStr + "T00:00:00");
+
+  document.getElementById("confirmDateLabel").innerText = `${dateStr}（星期${WEEKDAY_LABELS[dObj.getDay()]}）`;
+
+  let workCount = 0, regDayOffCount = 0, leaveCount = 0;
+  const container = document.getElementById("confirmGroupsContainer");
+  container.innerHTML = "";
+
+  GROUPS_DATA.forEach(group => {
+    const people = [{ name: group.managerName, title: group.managerTitle }]
+      .concat(group.members.map(m => ({ name: m, title: '' })));
+
+    let rowsHTML = "";
+    people.forEach(p => {
+      const leaveType = monthData[p.name] ? monthData[p.name][dateStr] : null;
+      let badge = "";
+      if (leaveType === '例假') {
+        regDayOffCount++;
+        badge = `<span class="text-xs font-black px-2 py-1 rounded-lg border ${getLeaveTypeColor(leaveType, 'badge')}">🔴 例假</span>`;
+      } else if (leaveType) {
+        leaveCount++;
+        badge = `<span class="text-xs font-black px-2 py-1 rounded-lg border ${getLeaveTypeColor(leaveType, 'badge')}">🟡 休假（${leaveType}）</span>`;
+      } else {
+        workCount++;
+        badge = `<span class="text-xs font-black px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">🟢 上班</span>`;
+      }
+      rowsHTML += `
+        <div class="flex items-center justify-between py-1.5 px-1 border-b border-slate-50 last:border-0">
+          <span class="text-sm font-bold text-slate-800">${p.name}${p.title ? `<span class="text-[11px] text-slate-400 font-medium ml-1">(${p.title})</span>` : ''}</span>
+          ${badge}
+        </div>
+      `;
+    });
+
+    container.innerHTML += `
+      <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+        <div class="bg-slate-50 px-4 py-2 border-b border-slate-200 flex items-center justify-between">
+          <span class="font-black text-sm text-slate-900">📍 ${group.name}</span>
+          <span class="text-[11px] text-slate-400 font-medium">${group.members.length + 1} 人</span>
+        </div>
+        <div class="px-4 py-1">${rowsHTML}</div>
+      </div>
+    `;
+  });
+
+  document.getElementById("confirmWorkCount").innerText = workCount;
+  document.getElementById("confirmRegDayOffCount").innerText = regDayOffCount;
+  document.getElementById("confirmLeaveCount").innerText = leaveCount;
+  lucide.createIcons();
+}
+
+// 每天的派工/點工/發包資料如果永遠不清，JSON 會一直長大，最後可能撐爆 Google 試算表單一
+// 儲存格的容量上限而整個存檔失敗。這裡只保留「最近 90 天內」的資料在這份即時同步的 JSON 裡；
+// 更久以前的資料，正式的歷史紀錄已經另外存在「派工紀錄」「排休紀錄」分頁裡，不會因此遺失。
+const DAILY_DATA_RETENTION_DAYS = 30;   // 本機只留最近 30 天快取，正式資料都在資料庫
+function pruneOldDailyData() {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - DAILY_DATA_RETENTION_DAYS);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+  let pruned = false;
+  [DAILY_DISPATCH_DATA, DAILY_TEMP_WORKERS, SUBCONTRACT_DATA].forEach(obj => {
+    Object.keys(obj).forEach(dateKey => {
+      if (dateKey < cutoffStr) {
+        delete obj[dateKey];
+        pruned = true;
+      }
+    });
+  });
+  if (pruned) saveDataToLocalStorage();
+}
+
+// 派工資料初始化與防呆
+// 重要：這裡「絕對不能」對已經存在的當日派工紀錄做覆蓋——只補上「當天還沒有紀錄」的
+// 主管/成員預設值（例如全新的一天、或新加入名冊的成員），已經指派過的案場、狀態一律保留原樣。
+// 比對「這一天原本記錄的假別」跟「月曆排休目前最新的假別」是否不一致：
+// 如果這個人這天的狀態還是「假別驅動出來的預設值」（沒被主管手動調整過），就直接套用最新的
+// 排休結果（員工事後才送出/修改排休，派工畫面要能跟上）；如果主管已經手動處理過這天
+// （調成出勤/外借/加班/半天等），就尊重主管的決定不去動狀態，只更新顯示用的「原排假別」文字。
+// 回傳 true 代表這筆資料被更新了（呼叫端可以據此判斷要不要觸發存檔）。
+function resyncStatusWithLeave_(entry, currentLeaveType) {
+  const oldLeaveType = entry.leaveType || '';
+  const newLeaveType = currentLeaveType || '';
+  if (oldLeaveType === newLeaveType) return false;
+
+  const wasUntouchedDefault = entry.status === (oldLeaveType ? 'off' : 'work');
+  if (wasUntouchedDefault) {
+    entry.status = newLeaveType ? 'off' : 'work';
+    entry.workRatio = statusToWorkRatio(entry.status);
+  }
+  entry.leaveType = newLeaveType;
+  return true;
+}
+
+// 針對「已經存在派工資料」的每一天（不只是目前畫面選到的這天），檢查是否需要跟最新的
+// 月曆排休同步。這樣不管主管現在打開哪一天，其他天的資料也會在下次讀取雲端／送出排休後
+// 自動校正，不會因為沒被打開過就一直停留在舊的排休狀態，造成月曆排休跟每日派工兜不起來。
+function resyncAllDatesWithLatestLeaves() {
+  let anyChanged = false;
+  Object.keys(DAILY_DISPATCH_DATA).forEach(date => {
+    const yearMonth = date.substring(0, 7);
+    const monthData = MONTHLY_LEAVES_DB[yearMonth] || {};
+    const dayData = DAILY_DISPATCH_DATA[date];
+    GROUPS_DATA.forEach(group => {
+      const g = dayData[group.id];
+      if (!g) return;
+      if (g.managerStatus) {
+        const mgrLeaveType = monthData[group.managerName] ? monthData[group.managerName][date] : null;
+        if (resyncStatusWithLeave_(g.managerStatus, mgrLeaveType)) { anyChanged = true; if (CURRENT_USER) scheduleAutoSave(date, group.id); }
+      }
+      group.members.forEach(m => {
+        const ms = g.memberStatus[m];
+        if (!ms) return;
+        const memberLeaveType = monthData[m] ? monthData[m][date] : null;
+        if (resyncStatusWithLeave_(ms, memberLeaveType)) { anyChanged = true; if (CURRENT_USER) scheduleAutoSave(date, group.id); }
+      });
+    });
+  });
+  return anyChanged;
+}
+
+function initDispatchState() {
+  const selectedDate = document.getElementById("dispatchDate").value;
+  const yearMonth = selectedDate.substring(0, 7);
+  const monthData = MONTHLY_LEAVES_DB[yearMonth] || {};
+
+  if (!DAILY_DISPATCH_DATA[selectedDate]) DAILY_DISPATCH_DATA[selectedDate] = {};
+  const dayData = DAILY_DISPATCH_DATA[selectedDate];
+  let hasNewDefaults = false;
+
+  GROUPS_DATA.forEach(group => {
+    if (!dayData[group.id]) {
+      dayData[group.id] = { managerStatus: null, memberStatus: {}, locked: false };
+    }
+    const saved = dayData[group.id];
+
+    if (!saved.managerStatus) {
+      const mgrLeaveType = monthData[group.managerName] ? monthData[group.managerName][selectedDate] : null;
+      const isMgrOff = !!mgrLeaveType;
+      saved.managerStatus = {
+        name: group.managerName,
+        title: group.managerTitle,
+        status: isMgrOff ? 'off' : 'work',
+        workRatio: isMgrOff ? 0 : 1.0,
+        assignedSite: group.sites[0] || "未指定案場",
+        targetGroupId: '',
+        leaveType: mgrLeaveType || ''
+      };
+      hasNewDefaults = true;
+    } else {
+      // 姓名/職稱以最新名冊為準，避免改名後派工卡片顯示舊資料
+      saved.managerStatus.name = group.managerName;
+      saved.managerStatus.title = group.managerTitle;
+
+      // 跟最新的月曆排休同步：如果排休是在這天的派工資料建立「之後」才送出或修改的，
+      // 這裡要補上，避免月曆排休跟每日派工兩邊看到的狀態不一致。
+      const mgrLeaveTypeNow = monthData[group.managerName] ? monthData[group.managerName][selectedDate] : null;
+      if (resyncStatusWithLeave_(saved.managerStatus, mgrLeaveTypeNow)) hasNewDefaults = true;
+
+      // 防呆：非外借狀態的人，案場一律只能是自己組的案場；如果是改規則前留下的舊資料
+      // （曾經被指到別組案場），這裡自動導正回本組第一個案場，避免畫面出現不合規則的選項。
+      if (saved.managerStatus.status !== 'borrow' && !group.sites.includes(saved.managerStatus.assignedSite)) {
+        saved.managerStatus.assignedSite = group.sites[0] || "未指定案場";
+      } else if (saved.managerStatus.status === 'borrow') {
+        // 外借狀態的人，案場要檢查是否屬於「借去的那個組別」，而不是自己原本的組別；
+        // 這裡順便修正舊資料曾經發生過「案場還停在原組別、跟外借對象兜不起來」的錯誤資料，
+        // 並標記為需要存檔，確保修正結果會回存到雲端，不是只有這次畫面看起來正常而已。
+        const targetGroup = GROUPS_DATA.find(g => g.id === saved.managerStatus.targetGroupId);
+        if (!targetGroup || !targetGroup.sites.includes(saved.managerStatus.assignedSite)) {
+          saved.managerStatus.assignedSite = targetGroup ? (targetGroup.sites[0] || "未指定案場") : (group.sites[0] || "未指定案場");
+          hasNewDefaults = true;
+        }
+      }
+    }
+
+    group.members.forEach(m => {
+      if (!saved.memberStatus[m]) {
+        const memberLeaveType = monthData[m] ? monthData[m][selectedDate] : null;
+        const isOff = !!memberLeaveType;
+        saved.memberStatus[m] = {
+          status: isOff ? 'off' : 'work',
+          workRatio: isOff ? 0 : 1.0,
+          assignedSite: group.sites[0] || "未指定案場",
+          targetGroupId: '',
+          leaveType: memberLeaveType || ''
+        };
+        hasNewDefaults = true;
+      } else {
+        const ms = saved.memberStatus[m];
+
+        // 跟最新的月曆排休同步（理由同主管那段）
+        const memberLeaveTypeNow = monthData[m] ? monthData[m][selectedDate] : null;
+        if (resyncStatusWithLeave_(ms, memberLeaveTypeNow)) hasNewDefaults = true;
+
+        if (ms.status !== 'borrow' && !group.sites.includes(ms.assignedSite)) {
+          ms.assignedSite = group.sites[0] || "未指定案場";
+        } else if (ms.status === 'borrow') {
+          const targetGroup = GROUPS_DATA.find(g => g.id === ms.targetGroupId);
+          if (!targetGroup || !targetGroup.sites.includes(ms.assignedSite)) {
+            ms.assignedSite = targetGroup ? (targetGroup.sites[0] || "未指定案場") : (group.sites[0] || "未指定案場");
+            hasNewDefaults = true;
+          }
+        }
+      }
+    });
+
+    currentDispatch[group.id] = saved;
+  });
+
+  // 只有第一次建立這一天的預設資料時才需要存檔；沿用舊紀錄的情況不需要重複寫入
+  if (hasNewDefaults) saveDataToLocalStorage();
+}
+
+// 收集借入人員（主管支援他人組別也會同步在目標組別中浮現並能指派案場）
+// 案場資料直接讀寫「原組別」自己的 assignedSite 欄位，跟原組別畫面上「派往哪個案場」是同一份資料，
+// 不管在哪一邊修改，兩邊都會同步更新，也會一起存檔。
+function getBorrowedInMembers(targetGroupId) {
+  const list = [];
+  const targetGroup = GROUPS_DATA.find(g => g.id === targetGroupId);
+  const defaultSite = targetGroup ? (targetGroup.sites[0] || "未指定案場") : "未指定案場";
+
+  GROUPS_DATA.forEach(sourceGroup => {
+    if (sourceGroup.id === targetGroupId) return;
+    const sourceState = currentDispatch[sourceGroup.id];
+    if (!sourceState) return;
+
+    const mgrState = sourceState.managerStatus;
+    if (mgrState && mgrState.status === 'borrow' && mgrState.targetGroupId === targetGroupId) {
+      // 自我修復：如果案場是空的、或是舊資料留下來「不屬於目標組別」的無效案場（例如還停留在
+      // 原組別自己的案場），一律導正成目標組別的第一個案場，避免顯示/產出LINE文字時出現矛盾內容。
+      if (!mgrState.assignedSite || !targetGroup || !targetGroup.sites.includes(mgrState.assignedSite)) {
+        mgrState.assignedSite = defaultSite;
+      }
+      list.push({
+        name: `${mgrState.name}(${mgrState.title})`,
+        fromGroupName: sourceGroup.name,
+        workRatio: mgrState.workRatio || 1.0,
+        assignedSite: mgrState.assignedSite,
+        leaveType: mgrState.leaveType || '',
+        sourceGroupId: sourceGroup.id,
+        isManager: true,
+        memberKey: null
+      });
+    }
+
+    sourceGroup.members.forEach(member => {
+      const mState = sourceState.memberStatus[member];
+      if (mState && mState.status === 'borrow' && mState.targetGroupId === targetGroupId) {
+        if (!mState.assignedSite || !targetGroup || !targetGroup.sites.includes(mState.assignedSite)) {
+          mState.assignedSite = defaultSite;
+        }
+        list.push({
+          name: member,
+          fromGroupName: sourceGroup.name,
+          workRatio: mState.workRatio || 1.0,
+          assignedSite: mState.assignedSite,
+          leaveType: mState.leaveType || '',
+          sourceGroupId: sourceGroup.id,
+          isManager: false,
+          memberKey: member
+        });
+      }
+    });
+  });
+  return list;
+}
+
+function renderUI() {
+  const container = document.getElementById("groupsContainer");
+  container.innerHTML = "";
+
+  GROUPS_DATA.forEach(group => {
+    const state = currentDispatch[group.id];
+    const mgrState = state.managerStatus;
+    const borrowedInList = getBorrowedInMembers(group.id);
+    
+    const card = document.createElement("div");
+    card.id = `groupCard_${group.id}`;
+    card.className = "bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col";
+    
+    const isMgrOff = mgrState.status === 'off';
+    const isMgrBorrow = mgrState.status === 'borrow';
+    const isMgrOT = mgrState.status === 'ot1' || mgrState.status === 'ot15';
+    const isMgrOvertime = (mgrState.status === 'work' || mgrState.status === 'half' || mgrState.status === 'borrow' || isMgrOT) && !!mgrState.leaveType;
+
+    const managerHTML = `
+      <div class="py-2.5 px-3 bg-blue-50/60 border-b border-blue-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div class="flex items-center justify-between sm:justify-start space-x-2">
+          <div class="flex items-center space-x-1.5 min-w-[100px]">
+            <span class="text-xs bg-blue-600 text-white px-1.5 py-0.5 rounded font-black text-[10px]">主管</span>
+            <span class="font-black text-sm text-slate-900 ${isMgrOff ? 'text-slate-400 line-through' : ''}">${mgrState.name}</span>
+            <span class="text-xs text-slate-500 font-medium">(${mgrState.title})</span>
+            ${isMgrOvertime ? `
+              <span class="text-[10px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded-full flex items-center shadow-sm animate-pulse" title="原排定【${mgrState.leaveType}】調班出勤">
+                ⚠️ 原排【${mgrState.leaveType}】(調班)
+              </span>
+            ` : ''}
+          </div>
+          
+          <select onchange="updateManagerStatus('${group.id}', this.value)" 
+            class="text-xs font-bold rounded-lg border px-2 py-1 focus:ring-1 focus:ring-blue-500 ${
+              isMgrOff ? getLeaveTypeColor(mgrState.leaveType, 'select') :
+              isMgrBorrow ? 'bg-purple-100 text-purple-800 border-purple-300 font-bold' :
+              isMgrOvertime ? 'bg-amber-100 text-amber-900 border-amber-400 font-black' :
+              isMgrOT ? 'bg-orange-100 text-orange-800 border-orange-300 font-bold' :
+              'bg-blue-600 text-white border-blue-600'
+            }">
+            <option value="work" ${mgrState.status === 'work' ? 'selected' : ''}>出工 (1工)</option>
+            <option value="half" ${mgrState.status === 'half' ? 'selected' : ''}>半天 (0.5工)</option>
+            <option value="borrow" ${mgrState.status === 'borrow' ? 'selected' : ''}>➡️ 支援他組</option>
+            <option value="ot1" ${mgrState.status === 'ot1' ? 'selected' : ''}>加班 (1工)</option>
+            <option value="ot15" ${mgrState.status === 'ot15' ? 'selected' : ''}>加班 (1.5工)</option>
+            <option value="off" ${isMgrOff ? 'selected' : ''}>${mgrState.leaveType ? '休假 ('+mgrState.leaveType+')' : '休假/請假'}</option>
+          </select>
+        </div>
+
+        <div class="flex items-center space-x-1.5 flex-1 sm:justify-end">
+          ${isMgrBorrow ? `
+            <div class="flex items-center space-x-1 flex-1 sm:flex-none">
+              <span class="text-[11px] text-purple-700 font-bold">借至:</span>
+              <select onchange="updateManagerBorrowTarget('${group.id}', this.value)" 
+                class="text-xs rounded-lg border border-purple-300 bg-purple-50 px-2 py-1 text-purple-900 font-bold flex-1 sm:flex-none">
+                <option value="">選擇借給哪組...</option>
+                ${GROUPS_DATA.filter(g => g.id !== group.id).map(g => `<option value="${g.id}" ${mgrState.targetGroupId === g.id ? 'selected' : ''}>${g.name}</option>`).join('')}
+              </select>
+            </div>
+            ${mgrState.targetGroupId ? `
+              <div class="flex items-center space-x-1 flex-1 sm:flex-none">
+                <span class="text-[11px] text-purple-700 font-bold">派往:</span>
+                <select onchange="updateManagerBorrowSite('${group.id}', this.value)" 
+                  class="text-xs rounded-lg border border-purple-300 bg-white px-2 py-1 text-purple-900 font-bold flex-1 sm:flex-none">
+                  ${(GROUPS_DATA.find(g => g.id === mgrState.targetGroupId)?.sites || []).map(s => `<option value="${s}" ${mgrState.assignedSite === s ? 'selected' : ''}>${s}</option>`).join('')}
+                </select>
+              </div>
+            ` : ''}
+          ` : isMgrOff ? `
+            <span class="text-xs px-2 py-0.5 rounded font-bold ${getLeaveTypeColor(mgrState.leaveType, 'badge')}">排定【${mgrState.leaveType || '休假'}】</span>
+          ` : `
+            <div class="flex items-center space-x-1 flex-1 sm:flex-none">
+              <span class="text-[11px] text-slate-500 font-medium">派往:</span>
+              <select onchange="updateManagerSite('${group.id}', this.value)" class="text-xs font-bold bg-white border border-blue-300 rounded-lg px-2 py-1 text-blue-800 focus:outline-none flex-1 sm:flex-none">
+                ${group.sites.map(s => `<option value="${s}" ${mgrState.assignedSite === s ? 'selected' : ''}>${s}</option>`).join('')}
+              </select>
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+
+    let membersHTML = "";
+    group.members.forEach((member, mIdx) => {
+      const mState = state.memberStatus[member] || { status: 'work', workRatio: 1.0, assignedSite: group.sites[0], targetGroupId: '', leaveType: '' };
+      const isOff = mState.status === 'off';
+      const isBorrow = mState.status === 'borrow';
+      const isMemberOT = mState.status === 'ot1' || mState.status === 'ot15';
+      const isMemberOvertime = (mState.status === 'work' || mState.status === 'half' || mState.status === 'borrow' || isMemberOT) && !!mState.leaveType;
+
+      membersHTML += `
+        <div class="py-2.5 px-3 border-b border-slate-100 hover:bg-slate-50 transition flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div class="flex items-center justify-between sm:justify-start space-x-2">
+            <div class="flex items-center space-x-1.5 min-w-[70px]">
+              <span class="font-bold text-sm ${isOff ? 'text-slate-400 line-through' : 'text-slate-800'}">${member}</span>
+              ${isMemberOvertime ? `
+                <span class="text-[10px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded-full flex items-center shadow-sm" title="原排定【${mState.leaveType}】調班出勤">
+                  ⚠️ 原排【${mState.leaveType}】(調班)
+                </span>
+              ` : ''}
+            </div>
+            
+            <select onchange="updateMemberStatus('${group.id}', '${member}', this.value)" 
+              class="text-xs font-medium rounded-lg border px-2 py-1 focus:ring-1 focus:ring-blue-500 ${
+                isOff ? getLeaveTypeColor(mState.leaveType, 'select') + ' font-bold' :
+                isBorrow ? 'bg-purple-100 text-purple-800 border-purple-300 font-bold' :
+                isMemberOvertime ? 'bg-amber-100 text-amber-900 border-amber-400 font-black' :
+                isMemberOT ? 'bg-orange-100 text-orange-800 border-orange-300 font-bold' :
+                'bg-emerald-50 text-emerald-700 border-emerald-200'
+              }">
+              <option value="work" ${mState.status === 'work' ? 'selected' : ''}>出勤 (1工)</option>
+              <option value="half" ${mState.status === 'half' ? 'selected' : ''}>半天 (0.5工)</option>
+              <option value="borrow" ${mState.status === 'borrow' ? 'selected' : ''}>➡️ 外借支援</option>
+              <option value="ot1" ${mState.status === 'ot1' ? 'selected' : ''}>加班 (1工)</option>
+              <option value="ot15" ${mState.status === 'ot15' ? 'selected' : ''}>加班 (1.5工)</option>
+              <option value="off" ${isOff ? 'selected' : ''}>${mState.leaveType ? '休假 ('+mState.leaveType+')' : '休假/請假'}</option>
+            </select>
+          </div>
+
+          <div class="flex items-center space-x-1.5 flex-1 sm:justify-end">
+            ${isBorrow ? `
+              <div class="flex items-center space-x-1 flex-1 sm:flex-none">
+                <span class="text-[11px] text-purple-700 font-bold">借至:</span>
+                <select onchange="updateBorrowTargetGroup('${group.id}', '${member}', this.value)" 
+                  class="text-xs rounded-lg border border-purple-300 bg-purple-50 px-2 py-1 text-purple-900 font-bold flex-1 sm:flex-none">
+                  <option value="">選擇借給哪組...</option>
+                  ${GROUPS_DATA.filter(g => g.id !== group.id).map(g => `<option value="${g.id}" ${mState.targetGroupId === g.id ? 'selected' : ''}>${g.name}</option>`).join('')}
+                </select>
+              </div>
+              ${mState.targetGroupId ? `
+                <div class="flex items-center space-x-1 flex-1 sm:flex-none">
+                  <span class="text-[11px] text-purple-700 font-bold">派往:</span>
+                  <select onchange="updateMemberBorrowSite('${group.id}', '${member}', this.value)" 
+                    class="text-xs rounded-lg border border-purple-300 bg-white px-2 py-1 text-purple-900 font-bold flex-1 sm:flex-none">
+                    ${(GROUPS_DATA.find(g => g.id === mState.targetGroupId)?.sites || []).map(s => `<option value="${s}" ${mState.assignedSite === s ? 'selected' : ''}>${s}</option>`).join('')}
+                  </select>
+                </div>
+              ` : ''}
+            ` : isOff ? `
+              <span class="text-xs px-2 py-0.5 rounded font-bold ${getLeaveTypeColor(mState.leaveType, 'badge')}">原排定【${mState.leaveType || '休假'}】</span>
+            ` : `
+              <div class="flex items-center space-x-1 flex-1 sm:flex-none">
+                <span class="text-[11px] text-slate-400">派往:</span>
+                <select onchange="updateMemberSite('${group.id}', '${member}', this.value)" class="text-xs font-bold bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-blue-700 focus:outline-none flex-1 sm:flex-none">
+                  ${group.sites.map(s => `<option value="${s}" ${mState.assignedSite === s ? 'selected' : ''}>${s}</option>`).join('')}
+                </select>
+              </div>
+            `}
+          </div>
+        </div>
+      `;
+    });
+
+    let borrowedInHTML = "";
+    if (borrowedInList.length > 0) {
+      borrowedInHTML = borrowedInList.map(bm => `
+        <div class="py-2.5 px-3 bg-purple-50/90 border-b border-purple-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div class="flex items-center space-x-1.5">
+            <span class="text-xs bg-purple-600 text-white px-1.5 py-0.5 rounded font-black text-[10px]">支援</span>
+            <span class="font-bold text-sm text-purple-900">${bm.name}</span>
+            <span class="text-[11px] text-purple-600">(${bm.workRatio}工, 來自【${bm.fromGroupName}】)</span>
+            ${bm.leaveType ? `<span class="text-[10px] bg-amber-500 text-white font-bold px-1 rounded">⚠️原排${bm.leaveType}</span>` : ''}
+          </div>
+          <div class="flex items-center space-x-1 flex-1 sm:justify-end">
+            <span class="text-[11px] text-purple-800 font-bold">派往:</span>
+            <select onchange="updateBorrowedInMemberSite('${bm.sourceGroupId}', ${bm.isManager}, '${bm.memberKey || ''}', this.value)" class="text-xs font-bold bg-white border border-purple-300 rounded-lg px-2 py-1 text-purple-900 focus:outline-none flex-1 sm:flex-none">
+              ${group.sites.map(s => `<option value="${s}" ${bm.assignedSite === s ? 'selected' : ''}>${s}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    const tempWorkerList = getTempWorkerList(group.id);
+    let tempWorkersHTML = "";
+    if (tempWorkerList.length > 0) {
+      tempWorkersHTML = tempWorkerList.map((tw, idx) => `
+        <div class="flex items-center justify-between text-xs bg-purple-50 border border-purple-100 px-2.5 py-1.5 rounded-lg mb-1.5">
+          <div class="flex items-center space-x-2">
+            <span class="font-bold text-purple-900">${tw.name}</span>
+            <span class="text-purple-600 font-medium">(${tw.ratio}工)</span>
+            <span class="text-slate-600 bg-white px-1.5 py-0.5 rounded text-[11px]">📍 ${tw.site}</span>
+          </div>
+          <button onclick="removeTempWorker('${group.id}', ${idx})" class="text-slate-400 hover:text-red-500 p-0.5"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+        </div>
+      `).join('');
+    } else {
+      tempWorkersHTML = `<p class="text-xs text-slate-400 italic py-0.5">今日尚無額外點工</p>`;
+    }
+
+    const subcontractList = getSubcontractList(group.id);
+    const subcontractTotal = subcontractList.reduce((sum, sc) => sum + (parseInt(sc.count, 10) || 0), 0);
+    let subcontractHTML = "";
+    if (subcontractList.length > 0) {
+      subcontractHTML = subcontractList.map((sc, idx) => `
+        <div class="flex items-center justify-between text-xs bg-cyan-50 border border-cyan-100 px-2.5 py-1.5 rounded-lg mb-1.5 gap-1">
+          <div class="flex items-center flex-wrap gap-x-2 gap-y-0.5">
+            <span class="font-bold text-cyan-900">${sc.vendor}</span>
+            ${sc.workItem ? `<span class="text-cyan-700 text-[11px]">(${sc.workItem})</span>` : ''}
+            <span class="text-cyan-600 font-medium">${sc.count}人</span>
+            <span class="text-slate-600 bg-white px-1.5 py-0.5 rounded text-[11px]">📍 ${sc.site}</span>
+          </div>
+          <button onclick="removeSubcontractEntry('${group.id}', ${idx})" class="text-slate-400 hover:text-red-500 p-0.5"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+        </div>
+      `).join('');
+    } else {
+      subcontractHTML = `<p class="text-xs text-slate-400 italic py-0.5">今日尚無發包人員</p>`;
+    }
+
+    const isLocked = !!state.locked;
+
+    card.innerHTML = `
+      <div class="bg-slate-50 px-4 py-3 border-b border-slate-200 flex flex-wrap justify-between items-center gap-2">
+        <div class="flex items-center space-x-2">
+          <span class="font-black text-slate-900 text-base">${group.name}</span>
+          <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-md font-bold">${group.managerName} ${group.managerTitle}</span>
+          ${subcontractTotal > 0 ? `<span class="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-md font-bold">🔧 發包 ${subcontractTotal}人</span>` : ''}
+          ${isLocked ? `<span class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-md font-black flex items-center"><i data-lucide="lock" class="w-3 h-3 mr-1"></i>今日已鎖定</span>` : ''}
+        </div>
+        
+        <div class="flex items-center space-x-1.5">
+          <button onclick="toggleGroupLock('${group.id}')" class="text-xs ${isLocked ? 'bg-red-50 hover:bg-red-100 text-red-600 border border-red-200' : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'} px-2 py-1 rounded-lg font-bold transition flex items-center" title="${isLocked ? '解除本組今日鎖定' : '鎖定本組今日排班，避免誤改'}">
+            <i data-lucide="${isLocked ? 'lock-open' : 'lock'}" class="w-3 h-3 mr-1"></i> ${isLocked ? '解鎖' : '鎖定本日'}
+          </button>
+          <span class="text-xs text-slate-400 font-medium" title="案場清單請至「案場設定」試算表分頁管理">📍${group.sites.length}案場</span>
+          <span class="text-xs text-slate-400 font-medium">${group.members.length + 1}人</span>
+        </div>
+      </div>
+
+      <div class="p-3 sm:p-4 flex-1 flex flex-col justify-between">
+        <div>
+          ${isLocked ? `
+            <div class="bg-red-50 border border-red-200 text-red-700 text-xs font-bold rounded-lg px-3 py-2 mb-2.5 flex items-center">
+              <i data-lucide="lock" class="w-3.5 h-3.5 mr-1.5 flex-shrink-0"></i> 本組今日排班已鎖定，如需修改請點擊右上角「解鎖」
+            </div>
+          ` : ''}
+          <div class="${isLocked ? 'opacity-50 pointer-events-none select-none' : ''}">
+            <div class="space-y-0.5">${managerHTML}${membersHTML}${borrowedInHTML}</div>
+
+            <div class="mt-3.5 pt-2.5 border-t border-dashed border-slate-200">
+              <span class="text-xs font-bold text-slate-700 flex items-center mb-1.5">
+                <i data-lucide="user-plus" class="w-3.5 h-3.5 text-purple-600 mr-1"></i> 外部點工指派
+              </span>
+              ${tempWorkersHTML}
+              <div class="flex flex-wrap gap-1.5 mt-1.5">
+                <input list="savedTempWorkersList" id="twName_${group.id}" placeholder="點工姓名" class="text-xs border border-slate-300 rounded-lg px-2 py-1.5 flex-1 min-w-[110px] focus:outline-none">
+                <datalist id="savedTempWorkersList">${SAVED_TEMP_WORKERS.map(tw => `<option value="${tw}">`).join('')}</datalist>
+
+                <select id="twSite_${group.id}" class="text-xs border border-slate-300 rounded-lg px-2 py-1.5 bg-white text-blue-700 font-medium">
+                  ${group.sites.map(s => `<option value="${s}">${s}</option>`).join('')}
+                </select>
+
+                <select id="twRatio_${group.id}" class="text-xs border border-slate-300 rounded-lg px-1.5 py-1.5 bg-white text-slate-700">
+                  <option value="1.0">1.0工</option>
+                  <option value="0.5">0.5工</option>
+                  <option value="1.5">1.5工</option>
+                </select>
+                <button onclick="addTempWorker('${group.id}')" class="bg-purple-600 hover:bg-purple-500 text-white text-xs px-2.5 py-1.5 rounded-lg font-semibold transition">+ 加入</button>
+              </div>
+            </div>
+
+            <div class="mt-3.5 pt-2.5 border-t border-dashed border-slate-200">
+              <span class="text-xs font-bold text-slate-700 flex items-center mb-1.5">
+                <i data-lucide="hard-hat" class="w-3.5 h-3.5 text-cyan-600 mr-1"></i> 發包人數登記
+                ${subcontractTotal > 0 ? `<span class="ml-1.5 text-[11px] bg-cyan-50 text-cyan-700 px-1.5 py-0.5 rounded-full font-black">共 ${subcontractTotal} 人</span>` : ''}
+              </span>
+              ${subcontractHTML}
+              <div class="flex flex-wrap gap-1.5 mt-1.5">
+                <input type="text" id="scVendor_${group.id}" placeholder="發包廠商名稱" class="text-xs border border-slate-300 rounded-lg px-2 py-1.5 flex-1 min-w-[100px] focus:outline-none">
+                <input type="text" id="scItem_${group.id}" placeholder="工項(手動輸入)" class="text-xs border border-slate-300 rounded-lg px-2 py-1.5 flex-1 min-w-[100px] focus:outline-none">
+                <select id="scSite_${group.id}" class="text-xs border border-slate-300 rounded-lg px-2 py-1.5 bg-white text-blue-700 font-medium">
+                  ${group.sites.map(s => `<option value="${s}">${s}</option>`).join('')}
+                </select>
+                <input type="number" id="scCount_${group.id}" min="1" value="1" class="text-xs border border-slate-300 rounded-lg px-2 py-1.5 w-16 text-center">
+                <button onclick="addSubcontractEntry('${group.id}')" class="bg-cyan-600 hover:bg-cyan-500 text-white text-xs px-2.5 py-1.5 rounded-lg font-semibold transition">+ 加入</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-4 pt-2.5 border-t border-slate-100 flex gap-2">
+          <button onclick="saveGroupData('${group.id}')" class="bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2 px-2 rounded-lg flex items-center justify-center shadow transition" id="saveBtn_${group.id}">
+            <i data-lucide="cloud-upload" class="w-3.5 h-3.5 mr-1 text-blue-400"></i> 儲存
+          </button>
+          <button onclick="exportNodeAsJpg('groupCard_${group.id}', '${group.name}_派工表_' + document.getElementById('dispatchDate').value)" class="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-bold py-2 px-2 rounded-lg flex items-center justify-center shadow-sm transition" title="單獨下載本組派工卡片圖片">
+            <i data-lucide="image-down" class="w-3.5 h-3.5 mr-1 text-blue-600"></i> 存圖
+          </button>
+          <button onclick="generateLineMessage('${group.id}')" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 px-3 rounded-lg flex items-center justify-center shadow transition">
+            <i data-lucide="message-square" class="w-3.5 h-3.5 mr-1.5"></i> 產出【${group.name}】LINE 派工文字
+          </button>
+        </div>
+      </div>
+    `;
+
+    container.appendChild(card);
+  });
+
+  lucide.createIcons();
+  calculateStats();
+}
+
+// ===== 每組每日排班鎖定（各組獨立） =====
+function isGroupLockedForDate(groupId, date) {
+  const dayData = DAILY_DISPATCH_DATA[date];
+  return !!(dayData && dayData[groupId] && dayData[groupId].locked);
+}
+
+// 統一的鎖定防呆檢查：鎖定中回傳 true 並跳出提醒，未鎖定回傳 false 讓呼叫端繼續往下執行
+function checkGroupLockOrAlert(groupId) {
+  const date = document.getElementById("dispatchDate").value;
+  const group = GROUPS_DATA.find(g => g.id === groupId);
+  if (isGroupLockedForDate(groupId, date)) {
+    alert(`🔒【${group ? group.name : ''}】${date} 的排班已鎖定，如需修改請先點擊「解鎖」！`);
+    return true;
+  }
+  return false;
+}
+
+function toggleGroupLock(groupId) {
+  const date = document.getElementById("dispatchDate").value;
+  if (!DAILY_DISPATCH_DATA[date]) DAILY_DISPATCH_DATA[date] = {};
+  if (!DAILY_DISPATCH_DATA[date][groupId]) DAILY_DISPATCH_DATA[date][groupId] = { managerStatus: null, memberStatus: {}, locked: false };
+  const dayGroupData = DAILY_DISPATCH_DATA[date][groupId];
+  const group = GROUPS_DATA.find(g => g.id === groupId);
+  const groupName = group ? group.name : '';
+
+  const wantLock = !dayGroupData.locked;
+  const msg = wantLock
+    ? `確定要鎖定【${groupName}】${date} 的排班嗎？\n\n鎖定後這組今天的出勤狀態、案場指派、點工、發包都無法再編輯，直到解鎖為止（其他組別不受影響）。`
+    : `確定要解除【${groupName}】${date} 的排班鎖定嗎？`;
+  if (!confirm(msg)) return;
+  if (!CURRENT_USER) return alert("請先以手機號碼登入！");
+
+  (async () => {
+    try {
+      // 先把這組還沒送出的異動存起來，再切換鎖定狀態（鎖定直接寫進資料庫，別台裝置也會看到）
+      await flushAutoSave();
+      const r = await api("PUT", "/api/day-group/lock", { phone: CURRENT_USER.phone, date, groupId, locked: wantLock });
+      dayGroupData.locked = wantLock;
+      if (currentDispatch[groupId]) currentDispatch[groupId].locked = wantLock;
+      setVersion(date, groupId, { version: r.version, updatedBy: CURRENT_USER.name, updatedAt: Date.now() });
+      cacheToLocalStorage_();
+      renderUI();
+    } catch (err) {
+      alert("切換鎖定失敗：" + err.message);
+    }
+  })();
+}
+
+function statusToWorkRatio(status) {
+  if (status === 'work') return 1.0;
+  if (status === 'half') return 0.5;
+  if (status === 'borrow') return 1.0;
+  if (status === 'ot1') return 1.0;
+  if (status === 'ot15') return 1.5;
+  return 0;
+}
+
+function updateMemberStatus(groupId, member, status) {
+  if (checkGroupLockOrAlert(groupId)) { renderUI(); return; }
+  const m = currentDispatch[groupId].memberStatus[member];
+  if (m.leaveType && (status === 'work' || status === 'half' || status === 'borrow' || status === 'ot1' || status === 'ot15')) {
+    if (!confirm(`⚠️【排假防呆提醒】\n${member} 今日原已排定【${m.leaveType}】！\n是否確認已完成溝通並改為調班出勤？`)) {
+      renderUI();
+      return;
+    }
+  }
+  m.status = status;
+  m.workRatio = statusToWorkRatio(status);
+  if (status === 'borrow') {
+    const other = GROUPS_DATA.find(g => g.id !== groupId);
+    m.targetGroupId = other ? other.id : '';
+    // 修正：切換成「外借支援」的當下，案場很可能還留著原組別的舊案場（例如自己組的案場），
+    // 對借入的目標組別來說根本不是有效選項，這裡立刻改成目標組別的第一個案場，避免產生
+    // 「借去A組、卻派往A組沒有的案場」這種矛盾資料（LINE通知/總覽表都會顯示錯誤內容）。
+    const targetGroup = GROUPS_DATA.find(g => g.id === m.targetGroupId);
+    if (!targetGroup || !targetGroup.sites.includes(m.assignedSite)) {
+      m.assignedSite = targetGroup ? (targetGroup.sites[0] || "未指定案場") : "未指定案場";
+    }
+  } else {
+    m.targetGroupId = '';
+  }
+  saveDataToLocalStorage();
+  renderUI();
+}
+function updateManagerStatus(groupId, status) {
+  if (checkGroupLockOrAlert(groupId)) { renderUI(); return; }
+  const m = currentDispatch[groupId].managerStatus;
+  if (m.leaveType && (status === 'work' || status === 'half' || status === 'borrow' || status === 'ot1' || status === 'ot15')) {
+    if (!confirm(`⚠️【排假防呆提醒】\n主管 ${m.name} 今日原已排定【${m.leaveType}】！\n是否確認調班出勤？`)) {
+      renderUI();
+      return;
+    }
+  }
+  m.status = status;
+  m.workRatio = statusToWorkRatio(status);
+  if (status === 'borrow') {
+    const other = GROUPS_DATA.find(g => g.id !== groupId);
+    m.targetGroupId = other ? other.id : '';
+    // 同上：切換成外借的當下立刻修正案場，避免留著原組別的舊案場造成矛盾資料
+    const targetGroup = GROUPS_DATA.find(g => g.id === m.targetGroupId);
+    if (!targetGroup || !targetGroup.sites.includes(m.assignedSite)) {
+      m.assignedSite = targetGroup ? (targetGroup.sites[0] || "未指定案場") : "未指定案場";
+    }
+  } else {
+    m.targetGroupId = '';
+  }
+  saveDataToLocalStorage();
+  renderUI();
+}
+
+function updateManagerSite(groupId, newSite) {
+  if (checkGroupLockOrAlert(groupId)) { renderUI(); return; }
+  currentDispatch[groupId].managerStatus.assignedSite = newSite;
+  saveDataToLocalStorage();
+  renderUI();
+}
+
+function updateMemberSite(groupId, member, newSite) {
+  if (checkGroupLockOrAlert(groupId)) { renderUI(); return; }
+  currentDispatch[groupId].memberStatus[member].assignedSite = newSite;
+  saveDataToLocalStorage();
+  renderUI();
+}
+
+function updateManagerBorrowTarget(groupId, targetGroupId) {
+  if (checkGroupLockOrAlert(groupId)) { renderUI(); return; }
+  const m = currentDispatch[groupId].managerStatus;
+  m.targetGroupId = targetGroupId;
+  const targetGroup = GROUPS_DATA.find(g => g.id === targetGroupId);
+  if (targetGroup && !targetGroup.sites.includes(m.assignedSite)) {
+    m.assignedSite = targetGroup.sites[0] || "未指定案場";
+  }
+  saveDataToLocalStorage();
+  renderUI();
+}
+function updateBorrowTargetGroup(groupId, member, targetGroupId) {
+  if (checkGroupLockOrAlert(groupId)) { renderUI(); return; }
+  const m = currentDispatch[groupId].memberStatus[member];
+  m.targetGroupId = targetGroupId;
+  const targetGroup = GROUPS_DATA.find(g => g.id === targetGroupId);
+  if (targetGroup && !targetGroup.sites.includes(m.assignedSite)) {
+    m.assignedSite = targetGroup.sites[0] || "未指定案場";
+  }
+  saveDataToLocalStorage();
+  renderUI();
+}
+function updateManagerBorrowSite(groupId, site) {
+  if (checkGroupLockOrAlert(groupId)) { renderUI(); return; }
+  currentDispatch[groupId].managerStatus.assignedSite = site; saveDataToLocalStorage(); renderUI();
+}
+function updateMemberBorrowSite(groupId, member, site) {
+  if (checkGroupLockOrAlert(groupId)) { renderUI(); return; }
+  currentDispatch[groupId].memberStatus[member].assignedSite = site; saveDataToLocalStorage(); renderUI();
+}
+// 從「借入人員」那一側修改案場時，直接寫回原組別自己的紀錄，兩邊看到的、存檔的都是同一份資料
+// 鎖定檢查要看「原組別」（sourceGroupId）是否鎖定，因為實際被修改的資料屬於原組別
+function updateBorrowedInMemberSite(sourceGroupId, isManager, memberKey, site) {
+  if (checkGroupLockOrAlert(sourceGroupId)) { renderUI(); return; }
+  const sourceState = currentDispatch[sourceGroupId];
+  if (!sourceState) return;
+  if (isManager === true || isManager === 'true') {
+    sourceState.managerStatus.assignedSite = site;
+  } else {
+    sourceState.memberStatus[memberKey].assignedSite = site;
+  }
+  saveDataToLocalStorage();
+  renderUI();
+}
+
+// ===== 外部點工登記（依日期各自獨立記錄，與發包人數相同的持久化方式） =====
+function getTempWorkerList(groupId) {
+  const date = document.getElementById("dispatchDate").value;
+  if (!DAILY_TEMP_WORKERS[date]) DAILY_TEMP_WORKERS[date] = {};
+  if (!DAILY_TEMP_WORKERS[date][groupId]) DAILY_TEMP_WORKERS[date][groupId] = [];
+  return DAILY_TEMP_WORKERS[date][groupId];
+}
+
+function addTempWorker(groupId) {
+  if (checkGroupLockOrAlert(groupId)) return;
+  const name = document.getElementById(`twName_${groupId}`).value.trim();
+  const site = document.getElementById(`twSite_${groupId}`).value;
+  const ratio = parseFloat(document.getElementById(`twRatio_${groupId}`).value);
+  if (!name) return alert("請輸入點工姓名！");
+  if (!SAVED_TEMP_WORKERS.includes(name)) { SAVED_TEMP_WORKERS.push(name); }
+  getTempWorkerList(groupId).push({ name, site, ratio });
+  saveDataToLocalStorage();
+
+  document.getElementById(`twName_${groupId}`).value = "";
+  renderUI();
+}
+function removeTempWorker(groupId, idx) {
+  if (checkGroupLockOrAlert(groupId)) return;
+  getTempWorkerList(groupId).splice(idx, 1);
+  saveDataToLocalStorage();
+  renderUI();
+}
+
+// ===== 發包人數登記（依日期各自獨立記錄，不影響本工/點工工數統計） =====
+function getSubcontractList(groupId) {
+  const date = document.getElementById("dispatchDate").value;
+  if (!SUBCONTRACT_DATA[date]) SUBCONTRACT_DATA[date] = {};
+  if (!SUBCONTRACT_DATA[date][groupId]) SUBCONTRACT_DATA[date][groupId] = [];
+  return SUBCONTRACT_DATA[date][groupId];
+}
+
+function addSubcontractEntry(groupId) {
+  if (checkGroupLockOrAlert(groupId)) return;
+  const vendor = document.getElementById(`scVendor_${groupId}`).value.trim();
+  const workItem = document.getElementById(`scItem_${groupId}`).value.trim();
+  const site = document.getElementById(`scSite_${groupId}`).value;
+  let count = parseInt(document.getElementById(`scCount_${groupId}`).value, 10);
+  if (!vendor) return alert("請輸入發包廠商名稱！");
+  if (!count || count < 1) count = 1;
+
+  getSubcontractList(groupId).push({ vendor, workItem, site, count });
+  saveDataToLocalStorage();
+
+  document.getElementById(`scVendor_${groupId}`).value = "";
+  document.getElementById(`scItem_${groupId}`).value = "";
+  document.getElementById(`scCount_${groupId}`).value = "1";
+  renderUI();
+}
+
+function removeSubcontractEntry(groupId, idx) {
+  if (checkGroupLockOrAlert(groupId)) return;
+  getSubcontractList(groupId).splice(idx, 1);
+  saveDataToLocalStorage();
+  renderUI();
+}
+
+function calculateStats() {
+  let totalM = 0, totalO = 0, totalW = 0, totalT = 0, totalSC = 0;
+  GROUPS_DATA.forEach(group => {
+    totalM += (group.members.length + 1);
+    const s = currentDispatch[group.id];
+    if (s && s.managerStatus) {
+      if (s.managerStatus.status === 'off') totalO++;
+      else totalW += (s.managerStatus.workRatio || 0);
+    }
+
+    if (s && s.memberStatus) {
+      group.members.forEach(m => {
+        const ms = s.memberStatus[m];
+        if (ms) {
+          if (ms.status === 'off') totalO++;
+          else totalW += (ms.workRatio || 0);
+        }
+      });
+    }
+
+    getTempWorkerList(group.id).forEach(tw => totalT += (tw.ratio || 0));
+  });
+
+  const dateStr = document.getElementById("dispatchDate").value;
+  const dayScData = SUBCONTRACT_DATA[dateStr] || {};
+  Object.keys(dayScData).forEach(gid => {
+    (dayScData[gid] || []).forEach(sc => totalSC += (parseInt(sc.count, 10) || 0));
+  });
+
+  document.getElementById("totalMembers").innerText = totalM + " 人";
+  document.getElementById("totalOffCount").innerText = totalO + " 人";
+  document.getElementById("totalWorkCount").innerText = totalW + " 工";
+  document.getElementById("totalTempCount").innerText = totalT + " 工";
+  document.getElementById("totalSubcontractCount").innerText = totalSC + " 人";
+}
+// 員工月曆排休專區邏輯
+let currentMemberLeaves = {};
+
+function initLeaveMemberSelect() {
+  const select = document.getElementById("leaveMemberSelect");
+  const currentVal = select.value;
+  select.innerHTML = '<option value="">-- 請選擇姓名 --</option>';
+  
+  GROUPS_DATA.forEach(g => {
+    select.innerHTML += `<optgroup label="📍 ${g.name}">`;
+    select.innerHTML += `<option value="${g.managerName}">${g.managerName} (${g.managerTitle})</option>`;
+    g.members.forEach(m => {
+      select.innerHTML += `<option value="${m}">${m}</option>`;
+    });
+    select.innerHTML += `</optgroup>`;
+  });
+
+  if (currentVal) select.value = currentVal;
+}
+
+function loadMemberMonthlyLeave() {
+  const memberName = document.getElementById("leaveMemberSelect").value;
+  const month = getSelectedLeaveYearMonth();
+  if (!memberName) { currentMemberLeaves = {}; renderLeaveCalendar(); return; }
+
+  const monthDb = MONTHLY_LEAVES_DB[month] || {};
+  currentMemberLeaves = Object.assign({}, monthDb[memberName] || {});
+  renderLeaveCalendar();
+}
+
+// 依「假別設定」分頁目前的 LEAVE_TYPES 清單，動態產生假別筆刷按鈕（含最前面的「出勤(清除)」）
+function renderLeaveTypeButtons() {
+  const container = document.getElementById("leaveTypeButtonsContainer");
+  if (!container) return;
+  let html = `<button onclick="setActiveLeaveType('')" id="ltBtn_work" class="px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-blue-600 text-white border-blue-600 shadow-sm transition flex items-center justify-center">出勤 (清除)</button>`;
+  LEAVE_TYPES.forEach(type => {
+    html += `<button onclick="setActiveLeaveType('${type}')" id="ltBtn_${type}" class="px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-white ${getLeaveTypeColor(type, 'button')} hover:bg-slate-50 transition flex items-center justify-center">${type}</button>`;
+  });
+  container.innerHTML = html;
+  setActiveLeaveType(activeLeaveTypeBrush || '');
+}
+
+function setActiveLeaveType(type) {
+  activeLeaveTypeBrush = type;
+  const types = [''].concat(LEAVE_TYPES);
+  types.forEach(t => {
+    const btnId = t === '' ? 'ltBtn_work' : `ltBtn_${t}`;
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    if (t === type) {
+      btn.className = "px-2.5 py-1.5 rounded-lg text-xs font-black border bg-blue-600 text-white border-blue-600 shadow-md scale-105 transition flex items-center justify-center ring-2 ring-blue-300";
+    } else {
+      const baseColor = t === '' ? "text-slate-700 border-slate-200" : getLeaveTypeColor(t, 'button');
+      btn.className = `px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-white ${baseColor} hover:bg-slate-50 transition flex items-center justify-center`;
+    }
+  });
+}
+
+function renderLeaveCalendar() {
+  const grid = document.getElementById("calendarGrid");
+  const monthStr = getSelectedLeaveYearMonth();
+  const [year, month] = monthStr.split('-').map(Number);
+  
+  grid.innerHTML = `
+    <div class="text-xs font-black text-red-500 py-1">日</div>
+    <div class="text-xs font-black text-slate-500 py-1">一</div>
+    <div class="text-xs font-black text-slate-500 py-1">二</div>
+    <div class="text-xs font-black text-slate-500 py-1">三</div>
+    <div class="text-xs font-black text-slate-500 py-1">四</div>
+    <div class="text-xs font-black text-slate-500 py-1">五</div>
+    <div class="text-xs font-black text-emerald-600 py-1">六</div>
+  `;
+
+  const firstDay = new Date(year, month - 1, 1).getDay();
+  const totalDays = new Date(year, month, 0).getDate();
+
+  for (let i = 0; i < firstDay; i++) {
+    grid.innerHTML += `<div class="p-2 sm:p-3 bg-slate-50/50 rounded-xl"></div>`;
+  }
+
+  let count = 0;
+  for (let day = 1; day <= totalDays; day++) {
+    const dStr = String(day).padStart(2, '0');
+    const dateKey = `${monthStr}-${dStr}`;
+    const leaveType = currentMemberLeaves[dateKey] || "";
+    if (leaveType) count++;
+
+    let badgeClass = "bg-white border-slate-200 text-slate-700 hover:border-blue-400";
+    if (leaveType) badgeClass = getLeaveTypeColor(leaveType, "badge") + " font-black";
+
+    grid.innerHTML += `
+      <div onclick="applyLeaveToDay('${dateKey}')" class="p-2 sm:p-2.5 rounded-xl border cursor-pointer transition flex flex-col justify-between items-center min-h-[58px] ${badgeClass} shadow-sm active:scale-95">
+        <span class="text-xs font-black">${day}</span>
+        <span class="text-[10px] sm:text-xs leading-none mt-1">${leaveType || '<span class="text-slate-300 font-normal">出勤</span>'}</span>
+      </div>
+    `;
+  }
+  document.getElementById("totalLeaveDaysBadge").innerText = count;
+}
+
+function applyLeaveToDay(dateKey) {
+  const memberName = document.getElementById("leaveMemberSelect").value;
+  if (!memberName) return alert("請先在右上角選取您的姓名！");
+
+  if (activeLeaveTypeBrush) {
+    currentMemberLeaves[dateKey] = activeLeaveTypeBrush;
+  } else {
+    delete currentMemberLeaves[dateKey];
+  }
+
+  renderLeaveCalendar();
+}
+
+async function submitMonthlyLeave() {
+  const memberName = document.getElementById("leaveMemberSelect").value;
+  const month = getSelectedLeaveYearMonth();
+  if (!memberName) return alert("請先選取姓名！");
+  if (!CURRENT_USER) return alert("請先以手機號碼登入！");
+
+  const submitBtn = document.querySelector('button[onclick="submitMonthlyLeave()"]');
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.innerText = "送出中，請稍候..."; }
+
+  if (!MONTHLY_LEAVES_DB[month]) MONTHLY_LEAVES_DB[month] = {};
+  MONTHLY_LEAVES_DB[month][memberName] = currentMemberLeaves;
+  cacheToLocalStorage_();
+
+  try {
+    // 後端存好排休後，會順便把「還沒被主管手動調整過」的派工狀態一起校正
+    const result = await api("PUT", "/api/leaves", {
+      phone: CURRENT_USER.phone, month, personName: memberName, leaves: currentMemberLeaves,
+    });
+    alert(`✅【${memberName}】${month} 排休已儲存` + (result.syncedDispatch ? `，並同步更新 ${result.syncedDispatch} 筆派工狀態` : "") + "！");
+    updateCloudBadge(true);
+    await ensureLeaveMonthLoaded(month, true);
+    await reloadCurrentDay();
+  } catch (err) {
+    updateCloudBadge(false);
+    alert("⚠️ 排休儲存失敗：" + err.message);
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = `<i data-lucide="send" class="w-4 h-4 mr-1.5"></i> 送出並儲存本月排休表`;
+    lucide.createIcons();
+  }
+  loadMemberMonthlyLeave();
+}
+
+// 雲端同步派工
+// 組出「單一組別」要寫入派工紀錄的內容（純函式，不送出），供批次組合使用
+function buildGroupDispatchPayload_(groupId) {
+  const group = GROUPS_DATA.find(g => g.id === groupId);
+  if (!group) return null;
+
+  const state = currentDispatch[groupId];
+  if (!state) return null;
+
+  const mgrState = state.managerStatus;
+  const borrowedInList = getBorrowedInMembers(groupId);
+
+  const records = [];
+  if (mgrState && mgrState.status !== 'off') {
+    const targetG = GROUPS_DATA.find(g=>g.id===mgrState.targetGroupId);
+    const overtimeTag = mgrState.leaveType ? `(原排定${mgrState.leaveType}調班)` : '';
+    const mgrTypeTag = mgrState.status === 'ot1' ? '(加班1工)' : mgrState.status === 'ot15' ? '(加班1.5工)' : mgrState.status === 'half' ? '(半天)' : '';
+    records.push({ 
+      name: `${mgrState.name}(${mgrState.title})`, 
+      role: "主管", 
+      site: mgrState.status === 'borrow' ? `外借【${targetG?.name || '他組'}】📍${mgrState.assignedSite || '未指定'}` : mgrState.assignedSite, 
+      workRatio: mgrState.workRatio, 
+      remark: mgrState.status === 'borrow' ? `借至 ${targetG?.name || '他組'} → ${mgrState.assignedSite || '未指定案場'} ${overtimeTag}` : `親自出工 ${mgrTypeTag} ${overtimeTag}` 
+    });
+  }
+
+  group.members.forEach(m => {
+    const s = state.memberStatus[m];
+    if (s && s.status !== 'off') {
+      const targetG = GROUPS_DATA.find(g=>g.id===s.targetGroupId);
+      const overtimeTag = s.leaveType ? `(原排定${s.leaveType}調班)` : '';
+      const memberTypeTag = s.status === 'ot1' ? '(加班1工)' : s.status === 'ot15' ? '(加班1.5工)' : s.status === 'half' ? '(半天)' : '';
+      records.push({ 
+        name: m, 
+        role: "本工", 
+        site: s.status === 'borrow' ? `外借【${targetG?.name || '他組'}】📍${s.assignedSite || '未指定'}` : s.assignedSite, 
+        workRatio: s.workRatio, 
+        remark: s.status === 'borrow' ? `借至 ${targetG?.name || '他組'} → ${s.assignedSite || '未指定案場'} ${overtimeTag}` : `組內派駐 ${memberTypeTag} ${overtimeTag}` 
+      });
+    }
+  });
+
+  borrowedInList.forEach(bm => records.push({ name: bm.name, role: "跨組支援", site: bm.assignedSite, workRatio: bm.workRatio, remark: `來自 ${bm.fromGroupName}` }));
+  getTempWorkerList(groupId).forEach(tw => records.push({ name: tw.name, role: "點工", site: tw.site, workRatio: tw.ratio, remark: "外部點工調用" }));
+
+  const subcontractList = getSubcontractList(groupId);
+  subcontractList.forEach(sc => records.push({ name: sc.vendor, role: "發包", site: sc.site, workRatio: sc.count, remark: `工項:${sc.workItem || '未填寫'}／發包人數:${sc.count}人（不計入本工工數）` }));
+
+  return { groupName: group.name, managerName: `${group.managerName} ${group.managerTitle}`, records: records };
+}
+
+// 舊版要另外寫一份「派工紀錄」分頁；現在 dispatch_entries 每人每天一列本身就是正式紀錄，
+// 不需要再額外送一次，這兩個函式保留成空殼，維持舊有呼叫點不報錯。
+async function sendAllGroupsDispatchLog_() { return true; }
+function scheduleDispatchLogAutoSync() {}
+function flushDispatchLogAutoSync() { flushAutoSave(); }
+
+async function saveGroupData(groupId) {
+  const btn = document.getElementById(`saveBtn_${groupId}`);
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 mr-1 animate-spin"></i> 儲存中...`;
+  btn.className = "bg-slate-500 text-white text-xs font-bold py-2 px-2 rounded-lg flex items-center justify-center shadow transition cursor-wait";
+  lucide.createIcons();
+
+  // 明確重新標記「目前這一天」為待送出：背景自動同步可能剛好已經把待送出清單清空過，
+  // 這裡重新標記，確保接下來這個有確認機制的正式「儲存」動作，一定會把今天的資料送出去。
+  const savedOk = await ensureSavedBeforeProceed(groupId);
+  if (savedOk) {
+    btn.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5 mr-1 text-emerald-400"></i> 已同步雲端！`;
+    btn.className = "bg-emerald-800 text-white text-xs font-bold py-2 px-2 rounded-lg flex items-center justify-center shadow transition";
+  } else {
+    btn.innerHTML = `<i data-lucide="cloud-upload" class="w-3.5 h-3.5 mr-1 text-blue-400"></i> 儲存`;
+    btn.className = "bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2 px-2 rounded-lg flex items-center justify-center shadow transition";
+  }
+  btn.disabled = false;
+  lucide.createIcons();
+  setTimeout(() => { btn.innerHTML = orig; btn.className = "bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2 px-2 rounded-lg flex items-center justify-center shadow transition"; lucide.createIcons(); }, 2000);
+}
+
+// 產出 LINE 訊息 (整合圖文卡片美化預覽 + 純文字版)
+async function generateLineMessage(targetGroupId) {
+  // 需求3：跟儲存按鈕一樣，產出LINE文字前也先確認雲端存檔成功（含多裝置衝突偵測），
+  // 確認沒問題才繼續往下產出通知內容，避免用舊資料或即將被覆蓋的資料產出通知。
+  const savedOk = await ensureSavedBeforeProceed(targetGroupId === 'ALL' ? null : targetGroupId);
+  if (!savedOk) return;
+
+  const date = document.getElementById("dispatchDate").value;
+  let rawOutput = "";
+  const cardContainer = document.getElementById("lineCardPreview");
+  cardContainer.innerHTML = "";
+
+  const groupsToProcess = targetGroupId === 'ALL' ? GROUPS_DATA : [GROUPS_DATA.find(g => g.id === targetGroupId)].filter(Boolean);
+
+  if (targetGroupId === 'ALL') {
+    document.getElementById("modalTitle").innerText = "全公司每日派工通知 (條列美化版)";
+    rawOutput = `【太綺工程 每日案場出勤指派通知】\n日期：${date}\n\n`;
+  } else {
+    const group = groupsToProcess[0];
+    document.getElementById("modalTitle").innerText = `【${group.name}】每日派工通知 (條列美化版)`;
+    rawOutput = `【${group.name} 每日派工通知】\n日期：${date}\n\n`;
+  }
+
+  for (const group of groupsToProcess) {
+    const { rawText, cardHTML } = formatSingleGroupData(group);
+    rawOutput += rawText;
+    cardContainer.innerHTML += cardHTML;
+  }
+
+  rawOutput += `\n⚠️【重要提醒】\n請全體同仁於明日準時抵達指定案場；如有出勤異動請即時回報直轄主管！`;
+
+  document.getElementById("lineTextOutput").value = rawOutput;
+  document.getElementById("lineModal").classList.remove("hidden");
+  switchLinePreview('card');
+  lucide.createIcons();
+}
+
+function switchLinePreview(mode) {
+  const cardView = document.getElementById("lineCardPreview");
+  const rawView = document.getElementById("lineRawPreview");
+  const tabCard = document.getElementById("lineTabBtn_card");
+  const tabRaw = document.getElementById("lineTabBtn_raw");
+
+  if (mode === 'card') {
+    cardView.classList.remove("hidden");
+    rawView.classList.add("hidden");
+    tabCard.className = "px-3 py-1 text-xs font-bold rounded-md bg-emerald-600 text-white transition";
+    tabRaw.className = "px-3 py-1 text-xs font-bold rounded-md text-slate-500 hover:text-slate-800 transition";
+  } else {
+    cardView.classList.add("hidden");
+    rawView.classList.remove("hidden");
+    tabRaw.className = "px-3 py-1 text-xs font-bold rounded-md bg-emerald-600 text-white transition";
+    tabCard.className = "px-3 py-1 text-xs font-bold rounded-md text-slate-500 hover:text-slate-800 transition";
+  }
+}
+
+// 格式化單組派工資料
+function formatSingleGroupData(group) {
+  const state = currentDispatch[group.id];
+  const mgrState = state.managerStatus;
+  const borrowedInList = getBorrowedInMembers(group.id);
+  const subcontractList = getSubcontractList(group.id);
+  const subcontractTotal = subcontractList.reduce((sum, sc) => sum + (parseInt(sc.count, 10) || 0), 0);
+  const tempWorkerList = getTempWorkerList(group.id);
+
+  let rawText = `━━━━━━━━━━━━━━━━━━━━━\n`;
+  rawText += `📍【${group.name}】（直轄主管：${group.managerName} ${group.managerTitle}）\n\n`;
+
+  const siteAssignments = {};
+  const borrowing = [];
+  const resting = [];
+
+  // 1. 主管出勤歸類
+  if (mgrState) {
+    const otTag = mgrState.leaveType ? `(⚠️原排${mgrState.leaveType})` : '';
+    const mgrLabel = `${mgrState.name}(主管)${otTag}`;
+    if (mgrState.status === 'work') {
+      if (!siteAssignments[mgrState.assignedSite]) siteAssignments[mgrState.assignedSite] = [];
+      siteAssignments[mgrState.assignedSite].push(mgrLabel);
+    } else if (mgrState.status === 'half') {
+      if (!siteAssignments[mgrState.assignedSite]) siteAssignments[mgrState.assignedSite] = [];
+      siteAssignments[mgrState.assignedSite].push(`${mgrLabel}(半天)`);
+    } else if (mgrState.status === 'ot1') {
+      if (!siteAssignments[mgrState.assignedSite]) siteAssignments[mgrState.assignedSite] = [];
+      siteAssignments[mgrState.assignedSite].push(`${mgrLabel}(加班1工)`);
+    } else if (mgrState.status === 'ot15') {
+      if (!siteAssignments[mgrState.assignedSite]) siteAssignments[mgrState.assignedSite] = [];
+      siteAssignments[mgrState.assignedSite].push(`${mgrLabel}(加班1.5工)`);
+    } else if (mgrState.status === 'borrow') {
+      const targetG = GROUPS_DATA.find(g => g.id === mgrState.targetGroupId);
+      borrowing.push(`${mgrLabel} ➡️ 借至【${targetG?.name || '他組'}】📍${mgrState.assignedSite || '未指定案場'}`);
+    } else if (mgrState.status === 'off') {
+      resting.push(`${mgrState.name}(主管)${mgrState.leaveType ? ' ['+mgrState.leaveType+']' : ''}`);
+    }
+  }
+
+  // 2. 本組組員歸類
+  group.members.forEach(m => {
+    const s = state.memberStatus[m];
+    if (s) {
+      const otTag = s.leaveType ? `(⚠️原排${s.leaveType})` : '';
+      const memberLabel = `${m}${otTag}`;
+      if (s.status === 'work') {
+        if (!siteAssignments[s.assignedSite]) siteAssignments[s.assignedSite] = [];
+        siteAssignments[s.assignedSite].push(memberLabel);
+      } else if (s.status === 'half') {
+        if (!siteAssignments[s.assignedSite]) siteAssignments[s.assignedSite] = [];
+        siteAssignments[s.assignedSite].push(`${memberLabel}(半天)`);
+      } else if (s.status === 'ot1') {
+        if (!siteAssignments[s.assignedSite]) siteAssignments[s.assignedSite] = [];
+        siteAssignments[s.assignedSite].push(`${memberLabel}(加班1工)`);
+      } else if (s.status === 'ot15') {
+        if (!siteAssignments[s.assignedSite]) siteAssignments[s.assignedSite] = [];
+        siteAssignments[s.assignedSite].push(`${memberLabel}(加班1.5工)`);
+      } else if (s.status === 'borrow') {
+        const targetG = GROUPS_DATA.find(g => g.id === s.targetGroupId);
+        borrowing.push(`${memberLabel} ➡️ 借至【${targetG?.name || '他組'}】📍${s.assignedSite || '未指定案場'}`);
+      } else if (s.status === 'off') {
+        resting.push(`${m}${s.leaveType ? ' ['+s.leaveType+']' : ''}`);
+      }
+    }
+  });
+
+  // 3. 跨組借入歸類至接收案場
+  borrowedInList.forEach(bm => {
+    if (!siteAssignments[bm.assignedSite]) siteAssignments[bm.assignedSite] = [];
+    const otTag = bm.leaveType ? `(⚠️原排${bm.leaveType})` : '';
+    siteAssignments[bm.assignedSite].push(`${bm.name}(${bm.fromGroupName}支援)${otTag}`);
+  });
+
+  // 產出條列式純文字
+  const siteKeys = Object.keys(siteAssignments);
+  if (siteKeys.length > 0) {
+    siteKeys.forEach(siteName => {
+      rawText += `▪ 派駐【${siteName}】（${siteAssignments[siteName].length}人）：\n`;
+      siteAssignments[siteName].forEach(p => {
+        rawText += `  ▫ ${p}\n`;
+      });
+      rawText += `\n`;
+    });
+  } else {
+    rawText += `▪ 今日無組內派駐出工\n\n`;
+  }
+  
+  if (tempWorkerList.length > 0) {
+    rawText += `▪ 外部點工（${tempWorkerList.length}人）：\n`;
+    tempWorkerList.forEach(tw => {
+      rawText += `  ▫ ${tw.name} [📍${tw.site}] (${tw.ratio}工)\n`;
+    });
+    rawText += `\n`;
+  }
+
+  if (subcontractList.length > 0) {
+    rawText += `▪ 發包人數（共 ${subcontractTotal} 人，不計入本工工數）：\n`;
+    subcontractList.forEach(sc => {
+      rawText += `  🔧 ${sc.vendor}${sc.workItem ? '(' + sc.workItem + ')' : ''} [📍${sc.site}] ${sc.count}人\n`;
+    });
+    rawText += `\n`;
+  }
+
+  if (borrowing.length > 0) {
+    rawText += `▪ 跨組借出（${borrowing.length}人）：\n`;
+    borrowing.forEach(b => {
+      rawText += `  ▫ ${b}\n`;
+    });
+    rawText += `\n`;
+  }
+
+  if (resting.length > 0) {
+    rawText += `▪ 今日排休（${resting.length}人）：\n`;
+    resting.forEach(r => {
+      rawText += `  ▫ ${r}\n`;
+    });
+    rawText += `\n`;
+  }
+
+  // 產出美化條列卡片 HTML
+  let sitesCardHTML = "";
+  if (siteKeys.length > 0) {
+    siteKeys.forEach(siteName => {
+      sitesCardHTML += `
+        <div class="bg-blue-50/70 border border-blue-100 rounded-xl p-2.5 space-y-1">
+          <div class="flex items-center justify-between text-xs font-black text-blue-900">
+            <span class="flex items-center"><i data-lucide="map-pin" class="w-3.5 h-3.5 text-blue-600 mr-1"></i> 派駐【${siteName}】</span>
+            <span class="bg-blue-200/80 text-blue-800 px-2 py-0.5 rounded-full text-[10px]">${siteAssignments[siteName].length} 人</span>
+          </div>
+          <div class="text-xs text-slate-700 font-medium pl-4 space-y-0.5">
+            ${siteAssignments[siteName].map(p => `<div>▫ ${p}</div>`).join('')}
+          </div>
+        </div>
+      `;
+    });
+  } else {
+    sitesCardHTML = `<p class="text-xs text-slate-400 italic py-1">今日尚無派駐出工</p>`;
+  }
+
+  let tempCardHTML = "";
+  if (tempWorkerList.length > 0) {
+    tempCardHTML = `
+      <div class="bg-purple-50/70 border border-purple-100 rounded-xl p-2.5 space-y-1">
+        <div class="text-xs font-black text-purple-900 flex items-center justify-between">
+          <span class="flex items-center"><i data-lucide="user-plus" class="w-3.5 h-3.5 text-purple-600 mr-1"></i> 外部點工調用</span>
+          <span class="bg-purple-200/80 text-purple-800 px-2 py-0.5 rounded-full text-[10px]">${tempWorkerList.length} 人</span>
+        </div>
+        <div class="text-xs text-purple-950 font-medium pl-4 space-y-0.5">
+          ${tempWorkerList.map(tw => `<div>▫ ${tw.name} (📍${tw.site} / ${tw.ratio}工)</div>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  let subcontractCardHTML = "";
+  if (subcontractList.length > 0) {
+    subcontractCardHTML = `
+      <div class="bg-cyan-50/70 border border-cyan-100 rounded-xl p-2.5 space-y-1">
+        <div class="text-xs font-black text-cyan-900 flex items-center justify-between">
+          <span class="flex items-center"><i data-lucide="hard-hat" class="w-3.5 h-3.5 text-cyan-600 mr-1"></i> 發包人數（不計入本工）</span>
+          <span class="bg-cyan-200/80 text-cyan-800 px-2 py-0.5 rounded-full text-[10px]">${subcontractTotal} 人</span>
+        </div>
+        <div class="text-xs text-cyan-950 font-medium pl-4 space-y-0.5">
+          ${subcontractList.map(sc => `<div>🔧 ${sc.vendor}${sc.workItem ? '(' + sc.workItem + ')' : ''} (📍${sc.site} / ${sc.count}人)</div>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  let borrowCardHTML = "";
+  if (borrowing.length > 0) {
+    borrowCardHTML = `
+      <div class="bg-purple-50/70 border border-purple-100 rounded-xl p-2.5 space-y-1">
+        <div class="text-xs font-black text-purple-900 flex items-center"><i data-lucide="arrow-right-circle" class="w-3.5 h-3.5 text-purple-600 mr-1"></i> 跨組支援他組</div>
+        <div class="text-xs text-purple-950 font-medium pl-4 space-y-0.5">
+          ${borrowing.map(b => `<div>▫ ${b}</div>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  let restCardHTML = "";
+  if (resting.length > 0) {
+    restCardHTML = `
+      <div class="bg-amber-50/70 border border-amber-100 rounded-xl p-2.5 space-y-1">
+        <div class="text-xs font-black text-amber-900 flex items-center justify-between">
+          <span class="flex items-center"><i data-lucide="calendar-x" class="w-3.5 h-3.5 text-amber-600 mr-1"></i> 今日排休同仁</span>
+          <span class="bg-amber-200/80 text-amber-800 px-2 py-0.5 rounded-full text-[10px]">${resting.length} 人</span>
+        </div>
+        <div class="text-xs text-amber-950 font-medium pl-4 space-y-0.5">
+          ${resting.map(r => `<div>▫ ${r}</div>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  const cardHTML = `
+    <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-2.5">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+        <div class="flex items-center space-x-2">
+          <span class="font-black text-sm text-slate-900">📍 ${group.name}</span>
+          <span class="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-bold">${group.managerName} ${group.managerTitle}</span>
+        </div>
+      </div>
+      <div class="space-y-2">
+        ${sitesCardHTML}
+        ${tempCardHTML}
+        ${subcontractCardHTML}
+        ${borrowCardHTML}
+        ${restCardHTML}
+      </div>
+    </div>
+  `;
+
+  return { rawText, cardHTML };
+}
+
+function closeModal() { document.getElementById("lineModal").classList.add("hidden"); }
+function copyToClipboard() {
+  const t = document.getElementById("lineTextOutput");
+  t.select();
+  navigator.clipboard.writeText(t.value).then(() => { document.getElementById("copyHint").innerText = "✅ 已成功複製純文字至剪貼簿！可直接至 LINE 貼上發送"; });
+}
+async function openApiSettingModal() {
+  // 舊版是自己打名字；現在改成重新用手機登入，身分以員工主檔為準
+  if (await promptLogin(true)) {
+    updateCloudBadge(true);
+    await loadStateFromCloud();
+    initDispatchState();
+    renderUI();
+  }
+}
+function closeApiSettingModal() { document.getElementById("apiSettingModal").classList.add("hidden"); }
+function saveApiSetting() {
+  const operatorName = document.getElementById("operatorNameInput").value.trim();
+  localStorage.setItem("TK_OPERATOR_NAME", operatorName);
+  closeApiSettingModal();
+  alert("操作人員姓名已更新儲存！");
+}
+function updateCloudBadge(syncOk) {
+  const b = document.getElementById("cloudStatusBadge"), t = document.getElementById("cloudStatusText");
+  if (!CURRENT_USER) {
+    b.className = "inline-block w-2 h-2 rounded-full bg-amber-400"; t.innerText = "尚未登入"; t.className = "text-amber-400 font-medium";
+  } else if (syncOk === false) {
+    b.className = "inline-block w-2 h-2 rounded-full bg-red-400"; t.innerText = "連線異常，資料暫存本機"; t.className = "text-red-400 font-medium";
+  } else {
+    b.className = "inline-block w-2 h-2 rounded-full bg-emerald-400";
+    t.innerText = `已連線（${CURRENT_USER.name}${CURRENT_USER.role === "admin" ? "／全組別" : ""}）`;
+    t.className = "text-emerald-400 font-medium";
+  }
+}
+
+// ===== 批量匯入員工排班 (Excel) =====
+// 假別代碼改用「假別設定」分頁的 LEAVE_TYPES 清單即可，不需要另外維護一份固定清單
+
+function getDefaultImportYearMonth() {
+  const val = document.getElementById("dispatchDate").value || getTomorrowDateString();
+  return val.substring(0, 7);
+}
+
+function openImportLeaveModal() {
+  const input = document.getElementById("importYearMonth");
+  if (!input.value) input.value = getDefaultImportYearMonth();
+  document.getElementById("importLeaveFileInput").value = "";
+  document.getElementById("importLeaveModal").classList.remove("hidden");
+  lucide.createIcons();
+}
+function closeImportLeaveModal() {
+  document.getElementById("importLeaveModal").classList.add("hidden");
+}
+
+// 產生空白範本：姓名 x 該月每一天，人資只需要填有休假的儲存格
+function downloadLeaveTemplate() {
+  if (typeof XLSX === "undefined") return alert("匯出功能載入中，請稍後再試一次！");
+  const yearMonth = document.getElementById("importYearMonth").value;
+  if (!yearMonth) return alert("請先選擇要匯出的年月！");
+
+  const [y, m] = yearMonth.split("-").map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+
+  const rows = [];
+  rows.push(["年月:", yearMonth]);
+  rows.push(["說明:", "請在對應日期欄填入假別代碼（例假/排休/特休/國定假/事病假），出勤日請留空白；完成後另存新檔，回系統點擊「匯入」即可。"]);
+  rows.push([]);
+
+  const header = ["姓名"];
+  for (let d = 1; d <= daysInMonth; d++) header.push(String(d));
+  rows.push(header);
+
+  GROUPS_DATA.forEach(g => {
+    rows.push([`${g.managerName}(${g.managerTitle}/${g.name})`]);
+    g.members.forEach(mem => rows.push([`${mem}(${g.name})`]));
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = [{ wch: 22 }].concat(new Array(daysInMonth).fill({ wch: 6 }));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "排班表");
+
+  const legendRows = [
+    ["假別代碼", "說明"],
+    ...LEAVE_TYPES.map(t => [t, "假別設定分頁定義的假別"]),
+    ["(留空白)", "當日正常出勤，不用填寫"],
+    [],
+    ["⚠️ 注意事項", ""],
+    ["1.", "姓名欄請勿更動或刪除，系統匯入時會用括號前的姓名比對同仁"],
+    ["2.", "若有新進同仁不在名單上，請先到「員工設定」試算表分頁新增，再重新下載範本"],
+    ["3.", "假別代碼請務必與左側代碼完全一致，不要自創代碼；如需新增假別，請到「假別設定」分頁新增"]
+  ];
+  const ws2 = XLSX.utils.aoa_to_sheet(legendRows);
+  ws2["!cols"] = [{ wch: 14 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, ws2, "假別代碼說明");
+
+  XLSX.writeFile(wb, `員工排班範本_${yearMonth}.xlsx`);
+}
+
+// 匯入人資填好的 Excel，寫入 MONTHLY_LEAVES_DB 並同步儲存/雲端/畫面
+function handleLeaveImportFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (typeof XLSX === "undefined") { alert("匯入功能載入中，請稍後再試一次！"); event.target.value = ""; return; }
+
+  const reader = new FileReader();
+  reader.onload = async function(e) {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type: "array" });
+      const wsName = wb.SheetNames.find(n => n.indexOf("排班") !== -1) || wb.SheetNames[0];
+      const ws = wb.Sheets[wsName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: true });
+
+      let yearMonth = "";
+      for (const r of rows) {
+        if (r[0] === "年月:" && r[1]) { yearMonth = String(r[1]).trim(); break; }
+      }
+      if (!yearMonth) yearMonth = document.getElementById("importYearMonth").value;
+      if (!yearMonth || !/^\d{4}-\d{2}$/.test(yearMonth)) {
+        alert("無法判斷此檔案對應的年月，請先在上方選擇正確年月後再匯入！");
+        event.target.value = "";
+        return;
+      }
+
+      const headerRowIdx = rows.findIndex(r => String(r[0]).trim() === "姓名");
+      if (headerRowIdx === -1) {
+        alert("找不到「姓名」標題列，請確認使用系統提供的範本格式！");
+        event.target.value = "";
+        return;
+      }
+
+      const headerRow = rows[headerRowIdx];
+      const dayColumns = [];
+      for (let c = 1; c < headerRow.length; c++) {
+        const v = headerRow[c];
+        if (v !== "" && !isNaN(v)) dayColumns.push({ colIdx: c, day: parseInt(v, 10) });
+      }
+      if (dayColumns.length === 0) {
+        alert("找不到日期欄位，請確認使用系統提供的範本格式！");
+        event.target.value = "";
+        return;
+      }
+
+      const allMembers = getAllMembersList();
+      const monthData = Object.assign({}, MONTHLY_LEAVES_DB[yearMonth] || {});
+      const invalidCells = [];
+      const unknownNames = [];
+      let importedCount = 0;
+
+      for (let r = headerRowIdx + 1; r < rows.length; r++) {
+        const row = rows[r];
+        let rawName = row[0] ? String(row[0]).trim() : "";
+        if (!rawName) continue;
+        // 範本姓名欄格式為「姓名(組別)」或「姓名(職稱/組別)」，取括號前的姓名做比對
+        const name = rawName.split("(")[0].trim();
+        if (!name) continue;
+        if (!allMembers.includes(name)) unknownNames.push(name);
+
+        const personLeaves = {};
+        dayColumns.forEach(({ colIdx, day }) => {
+          const cellVal = row[colIdx] !== undefined && row[colIdx] !== null ? String(row[colIdx]).trim() : "";
+          if (!cellVal) return;
+          if (!LEAVE_TYPES.includes(cellVal)) {
+            invalidCells.push(`${name} 第${day}日:「${cellVal}」`);
+            return;
+          }
+          const dd = String(day).padStart(2, "0");
+          personLeaves[`${yearMonth}-${dd}`] = cellVal;
+        });
+
+        monthData[name] = personLeaves;
+        importedCount++;
+      }
+
+      if (importedCount === 0) {
+        alert("這份檔案裡沒有讀到任何同仁的排班資料，請確認姓名欄是否有填寫！");
+        event.target.value = "";
+        return;
+      }
+
+      if (invalidCells.length > 0) {
+        alert("⚠️ 以下儲存格假別代碼系統無法辨識，已自動略過：\n" + invalidCells.slice(0, 12).join("\n") + (invalidCells.length > 12 ? "\n...(其餘略)" : ""));
+      }
+
+      MONTHLY_LEAVES_DB[yearMonth] = monthData;
+      cacheToLocalStorage_();
+
+      if (!CURRENT_USER) { alert("請先以手機號碼登入再匯入！"); event.target.value = ""; return; }
+      try {
+        await api("PUT", "/api/leaves/bulk", { phone: CURRENT_USER.phone, month: yearMonth, people: monthData });
+        updateCloudBadge(true);
+      } catch (err) {
+        updateCloudBadge(false);
+        alert("⚠️ 匯入雲端失敗：" + err.message);
+        event.target.value = "";
+        return;
+      }
+
+      let msg = `✅ 匯入完成！共匯入 ${importedCount} 位同仁 ${yearMonth} 的排班資料，已寫入資料庫。`;
+      if (unknownNames.length > 0) {
+        msg += `\n\n⚠️ 注意：以下姓名不在目前組織名冊中，排休紀錄仍已建立，請確認姓名是否正確或需要建檔：\n` + unknownNames.join("、");
+      }
+      alert(msg);
+
+      closeImportLeaveModal();
+      if (resyncAllDatesWithLatestLeaves()) saveDataToLocalStorage();
+      initDispatchState();
+      renderUI();
+      if (document.getElementById("leaveMemberSelect").value) loadMemberMonthlyLeave();
+      if (!document.getElementById("view_confirm").classList.contains("hidden")) renderConfirmView();
+    } catch (err) {
+      alert("匯入失敗，請確認檔案格式是否正確：" + err);
+    } finally {
+      event.target.value = "";
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+document.getElementById("dispatchDate").addEventListener("change", async () => {
+  const date = document.getElementById("dispatchDate").value;
+  localStorage.setItem("TK_LAST_DISPATCH_DATE", date);
+  await flushAutoSave();                      // 先把前一天還沒送出的異動補送
+  await ensureLeaveMonthLoaded(date.substring(0, 7));
+  await reloadCurrentDay();                   // 只抓這一天，資料量固定
+});
+
+// 使用者要離開/關閉頁面前，盡量把還沒送出的派工紀錄補寫送出（best-effort，瀏覽器不保證一定能完成）
+window.addEventListener("beforeunload", () => { flushDispatchLogAutoSync(); });
+
+// ===== 身分識別（手機號碼） =====
+// 舊版只在設定裡打一個名字，誰改的其實查不出來；現在用手機對應到員工主檔，
+// 主管只能改自己那一組，每一筆資料也會記錄更新人。
+async function promptLogin(force) {
+  if (!force && CURRENT_USER && CURRENT_USER.phone) {
+    try {
+      const r = await api("POST", "/api/auth/lookup", { phone: CURRENT_USER.phone });
+      if (r.found) { CURRENT_USER = { ...r.user, phone: CURRENT_USER.phone }; return true; }
+    } catch (err) { return true; }   // 連線有問題時先讓他用本機快取看畫面
+  }
+  for (;;) {
+    const phone = prompt("請輸入您的手機號碼以登入派工系統：", (CURRENT_USER && CURRENT_USER.phone) || "");
+    if (phone === null) return false;
+    try {
+      const r = await api("POST", "/api/auth/lookup", { phone: phone.trim() });
+      if (r.found) {
+        CURRENT_USER = { ...r.user, phone: phone.trim().replace(/[^0-9]/g, "") };
+        localStorage.setItem("TK_CURRENT_USER", JSON.stringify(CURRENT_USER));
+        localStorage.setItem("TK_OPERATOR_NAME", CURRENT_USER.name);
+        return true;
+      }
+      alert("查不到這組手機，請確認號碼，或請管理者到員工主檔補上您的手機。");
+    } catch (err) {
+      alert("登入失敗：" + err.message);
+      return false;
+    }
+  }
+}
+
+window.onload = async function() {
+  // 先用本機快取立即渲染畫面，不用乾等後端回應
+  renderLeaveTypeButtons();
+  initDispatchState();
+  renderUI();
+  updateCloudBadge();
+
+  const params = new URLSearchParams(window.location.search);
+  const isEmployeeView = params.get('tab') === 'leave';
+
+  if (isEmployeeView) {
+    document.getElementById("managerControls").classList.add("hidden");
+    document.getElementById("headerTitle").innerText = "員工每月排休填報系統";
+    document.getElementById("headerSubText").innerHTML = '<span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span><span class="text-emerald-400 font-medium">員工填報專用通道</span>';
+    switchTab('leave');
+  } else {
+    switchTab('dispatch');
+  }
+
+  await promptLogin(false);
+  updateCloudBadge();
+
+  // 背景向後端拉取最新資料，拉到後才更新畫面
+  await loadStateFromCloud();
+  // 拉到最新排休資料後，順便把「已經存在派工資料」的每一天都跟排休重新校正一次，
+  // 確保月曆排休跟每日派工兩邊看到的狀態一致（尤其是員工在派工資料建立之後才送出排休的情況）。
+  if (resyncAllDatesWithLatestLeaves()) saveDataToLocalStorage();
+  pruneOldDailyData();
+  renderLeaveTypeButtons();
+  initDispatchState();
+  renderUI();
+  updateCloudBadge();
+  if (document.getElementById("leaveMemberSelect").value) loadMemberMonthlyLeave();
+};
+</script>
+</body>
+</html>

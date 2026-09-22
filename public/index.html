@@ -11,10 +11,19 @@
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700;900&display=swap');
   body { font-family: 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; }
-  /* 存圖時攤開卡片所有分頁、隱藏分頁按鈕 */
+  /* ---------- 截圖專用（只作用在 html2canvas 的複製文件裡，畫面本身不受影響） ---------- */
+  /* 攤開卡片的三個分頁、隱藏分頁按鈕，圖片才會是完整內容 */
   .capture-all .card-pane.hidden { display: block !important; }
   .capture-all .card-pane + .card-pane { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #e2e8f0; }
   .capture-all [data-card-tabs] { display: none !important; }
+  /* 截圖時不需要的互動元件一律藏起來，避免空白按鈕佔位讓版面跑掉 */
+  .capture-all .no-capture { display: none !important; }
+  /* 表單控制項會被換成純文字方塊，這裡統一外觀，避免行高與對齊跑掉 */
+  .capture-all .cap-text { box-sizing: border-box; line-height: 1.3; }
+  .cap-head { padding: 2px 2px 10px; }
+  .cap-head-title { font-size: 17px; font-weight: 800; color: #0f172a; letter-spacing: .02em; white-space: nowrap; }
+  .cap-head-sub { font-size: 12.5px; color: #64748b; margin-top: 2px; }
+  .capture-all .cap-text.cap-multi { white-space: pre-wrap; }
   /* ---------- 手機版優化 ---------- */
   @media (max-width: 640px) {
     /* iOS 輸入框字小於 16px 會自動放大畫面，這裡統一拉到 16px */
@@ -105,7 +114,7 @@
         <i data-lucide="layers" class="w-3.5 h-3.5 mr-1"></i> 全公司派工彙整
       </button>
       <button onclick="exportNodeAsJpg('dispatchExportArea', '每日派工_' + document.getElementById('dispatchDate').value)" class="bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold px-3 py-2 rounded-xl border border-slate-300 shadow-sm transition flex items-center">
-        <i data-lucide="image-down" class="w-3.5 h-3.5 mr-1 text-blue-600"></i> 另存圖片(jpg)
+        <i data-lucide="image-down" class="w-3.5 h-3.5 mr-1 text-blue-600"></i> 傳送圖片
       </button>
     </div>
   </div>
@@ -172,7 +181,7 @@
         </button>
         <button onclick="goToTodayConfirm()" class="px-2.5 py-1.5 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white rounded-xl transition">今天</button>
         <button onclick="exportNodeAsJpg('confirmExportArea', '每日排班確認_' + document.getElementById('confirmDate').value)" class="px-2.5 py-1.5 text-xs font-bold bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl shadow-sm transition flex items-center">
-          <i data-lucide="image-down" class="w-3.5 h-3.5 mr-1 text-blue-600"></i> 另存圖片(jpg)
+          <i data-lucide="image-down" class="w-3.5 h-3.5 mr-1 text-blue-600"></i> 傳送圖片
         </button>
       </div>
     </div>
@@ -313,6 +322,26 @@
 
 <!-- API 網址設定 Modal -->
 <!-- 批量匯入員工排班 Modal -->
+<!-- ========== 圖片預覽 / 分享 ========== -->
+<div id="imgShareModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] hidden items-center justify-center p-3">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden">
+    <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-2">
+      <span class="font-bold text-sm text-slate-800 truncate" id="imgShareTitle">派工表圖片</span>
+      <button onclick="closeImgShare()" class="text-slate-400 hover:text-slate-700 text-lg leading-none px-1">✕</button>
+    </div>
+    <div class="flex-1 overflow-auto bg-slate-100 p-3">
+      <div id="imgShareLoading" class="text-center text-sm text-slate-500 py-10">圖片產生中，請稍候…</div>
+      <img id="imgSharePreview" class="w-full rounded-lg shadow bg-white" alt="派工表圖片預覽">
+    </div>
+    <div class="px-4 pt-2 text-[11px] text-slate-500" id="imgShareHint"></div>
+    <div class="p-3 grid grid-cols-3 gap-2">
+      <button id="imgShareBtn" onclick="shareCapturedImage()" class="hidden bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2.5 rounded-xl shadow transition">📤 分享</button>
+      <button id="imgCopyBtn" onclick="copyCapturedImage()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2.5 rounded-xl shadow transition">📋 複製圖片</button>
+      <button onclick="downloadCapturedImage()" class="bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-xs font-bold py-2.5 rounded-xl transition">⬇️ 下載</button>
+    </div>
+  </div>
+</div>
+
 <div id="importLeaveModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
   <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl p-5 space-y-4 max-h-[90vh] overflow-y-auto">
     <div class="flex justify-between items-center border-b pb-2">
@@ -687,80 +716,214 @@ async function loadStateFromCloud() {
   }
 }
 
-// 截圖前：把 <select>/<input> 這類瀏覽器原生控制項換成外觀相同的純文字 <span>，
-// 因為 html2canvas 沒辦法正確畫出原生控制項內的文字，換成純文字後截圖才不會出現虛線亂碼。
-function swapFormControlsForCapture(node) {
-  const swapped = [];
+// ============================================================
+// 截圖：html2canvas 畫不出原生 <select>/<input>/<textarea> 裡的文字，
+// 舊做法是「先把畫面上的控制項換成 <span>、截完再換回來」，但那會動到正在顯示的版面，
+// 也因為複製了整份 computed style，寬高常常對不上，圖片就跑掉了。
+// 現在改成只在 html2canvas 的「複製文件」裡替換，畫面本身完全不動，
+// 尺寸也是在複製文件裡實際量出來的，所以圖片跟畫面長得一樣。
+// ============================================================
+const CAPTURE_SELECTOR = 'select, textarea, input[type="text"], input[type="date"], input[type="number"], input[type="tel"]';
 
-  node.querySelectorAll("select").forEach(sel => {
-    const opt = (sel.selectedOptions && sel.selectedOptions[0]) || sel.options[sel.selectedIndex];
-    const span = document.createElement("span");
-    span.textContent = opt ? opt.text : (sel.value || "");
-    span.className = sel.className;
-    span.style.cssText = window.getComputedStyle(sel).cssText;
-    span.style.display = "inline-flex";
-    span.style.alignItems = "center";
-    span.setAttribute("data-tk-capture-clone", "1");
-    sel.insertAdjacentElement("beforebegin", span);
-    sel.style.visibility = "hidden";
-    sel.style.position = "absolute";
-    sel.style.pointerEvents = "none";
-    swapped.push({ original: sel, clone: span, origStyleCssText: sel.getAttribute("style") || "" });
-  });
-
-  node.querySelectorAll('input[type="text"], input[type="date"], input[type="number"]').forEach(inp => {
-    const span = document.createElement("span");
-    span.textContent = inp.value || "";
-    span.className = inp.className;
-    span.style.cssText = window.getComputedStyle(inp).cssText;
-    span.style.display = "inline-flex";
-    span.style.alignItems = "center";
-    span.setAttribute("data-tk-capture-clone", "1");
-    inp.insertAdjacentElement("beforebegin", span);
-    inp.style.visibility = "hidden";
-    inp.style.position = "absolute";
-    inp.style.pointerEvents = "none";
-    swapped.push({ original: inp, clone: span, origStyleCssText: inp.getAttribute("style") || "" });
-  });
-
-  return swapped;
-}
-
-function restoreFormControlsAfterCapture(swapped) {
-  swapped.forEach(({ original, clone, origStyleCssText }) => {
-    if (origStyleCssText) original.setAttribute("style", origStyleCssText);
-    else original.removeAttribute("style");
-    clone.remove();
+// 只加屬性、不改樣式，所以畫面不會有任何閃動或位移
+function tagControlValues(node) {
+  node.querySelectorAll(CAPTURE_SELECTOR).forEach(el => {
+    let text = '';
+    if (el.tagName === 'SELECT') {
+      const opt = (el.selectedOptions && el.selectedOptions[0]) || el.options[el.selectedIndex];
+      text = opt ? opt.text : '';
+    } else {
+      text = el.value || '';
+    }
+    el.setAttribute('data-cap-text', text);
+    el.setAttribute('data-cap-placeholder', el.value ? '' : (el.placeholder || ''));
   });
 }
 
-// 另存目前畫面為 jpg 圖片，方便直接傳到 LINE 群組
+function clearControlTags(node) {
+  node.querySelectorAll('[data-cap-text]').forEach(el => {
+    el.removeAttribute('data-cap-text');
+    el.removeAttribute('data-cap-placeholder');
+  });
+}
+
+// 在複製文件裡把控制項換成同尺寸的純文字方塊
+function replaceControlsInClone(clonedNode) {
+  const list = [...clonedNode.querySelectorAll('[data-cap-text]')];
+  // 先量好全部尺寸再一次替換，避免邊換邊量導致後面的元素位置位移
+  const measured = list.map(el => {
+    const r = el.getBoundingClientRect();
+    return { el, w: r.width, h: r.height };
+  });
+  measured.forEach(({ el, w, h }) => {
+    const doc = el.ownerDocument;
+    const box = doc.createElement('div');
+    const text = el.getAttribute('data-cap-text') || '';
+    const placeholder = el.getAttribute('data-cap-placeholder') || '';
+    const multi = el.tagName === 'TEXTAREA';
+    box.textContent = text || placeholder;
+    // 沿用原本的 class，邊框、內距、圓角、底色就會完全一致
+    box.className = el.className + ' cap-text' + (multi ? ' cap-multi' : '');
+    if (!text) box.setAttribute('data-cap-empty', '1');
+    if (!text && placeholder) box.style.color = '#94a3b8';
+    if (w > 0) box.style.width = w + 'px';
+    if (h > 0) box.style.minHeight = h + 'px';
+    box.style.display = 'flex';
+    box.style.alignItems = multi ? 'flex-start' : 'center';
+    box.style.overflow = 'hidden';
+    el.replaceWith(box);
+  });
+}
+
+// 傳到 LINE 群組的圖要「單獨看得懂」，所以在複製文件最上方補一列標題與日期
+function buildCaptureCaption(elementId) {
+  const date = document.getElementById("dispatchDate").value || "";
+  const d = date ? new Date(date + "T00:00:00") : null;
+  const week = d ? "（" + "日一二三四五六"[d.getDay()] + "）" : "";
+  let title = "全公司每日派工";
+  if (elementId === "confirmExportArea") title = "每日排班確認";
+  else if (elementId.startsWith("groupCard_")) {
+    // 卡片本身已經有組別與主管，標題只放組名，避免手機上擠成兩行
+    const g = GROUPS_DATA.find(x => "groupCard_" + x.id === elementId);
+    title = g ? `${g.name}　每日派工` : "每日派工";
+  }
+  return { title, sub: `${date}${week}　太綺水電工程` };
+}
+
+// 截圖前把「空的內容」整塊拿掉：沒填的工作安排、沒有點工、沒有發包，
+// 印在派工表上只是噪音，也會讓圖變得又長又空。
+function tidyCaptureClone(el) {
+  // 沒填字的工作安排整列移除
+  el.querySelectorAll('[data-task-row]').forEach(row => {
+    if (row.querySelector('[data-cap-empty]')) row.remove();
+  });
+  // 區塊裡沒有任何內容（點工／發包／工作安排）就整塊移除
+  el.querySelectorAll('[data-sec]').forEach(sec => {
+    const emptyMark = sec.querySelector('[data-sec-empty]');
+    const hasTaskRow = sec.querySelector('[data-task-row]');
+    if (emptyMark || (sec.dataset.sec === 'tasks' && !hasTaskRow)) sec.remove();
+  });
+  // 三個分頁都空了就把整個分頁區塊收掉，只留人員
+  el.querySelectorAll('.card-pane').forEach(pane => {
+    if (pane.dataset.pane !== 'people' && !pane.textContent.trim()) pane.remove();
+  });
+}
+
+// 把畫面上的某個區塊畫成圖片（回傳 canvas）
+async function captureNode(node, caption) {
+  if (document.fonts && document.fonts.ready) await document.fonts.ready;
+  tagControlValues(node);
+  try {
+    return await html2canvas(node, {
+      backgroundColor: '#f8fafc',
+      scale: Math.min(window.devicePixelRatio || 1, 2) < 2 ? 2 : 2,
+      useCORS: true,
+      // 只動複製文件：攤開分頁、換掉控制項，畫面本身不受影響
+      onclone: (doc, el) => {
+        el.classList.add('capture-all');
+        el.querySelectorAll('textarea').forEach(t => { t.style.height = 'auto'; });
+        replaceControlsInClone(el);
+        tidyCaptureClone(el);
+        if (caption) {
+          const head = doc.createElement('div');
+          head.className = 'cap-head';
+          head.innerHTML = `<div class="cap-head-title">${caption.title}</div><div class="cap-head-sub">${caption.sub}</div>`;
+          el.insertBefore(head, el.firstChild);
+        }
+      },
+    });
+  } finally {
+    clearControlTags(node);
+  }
+}
+
+// ============================================================
+// 圖片產生後的預覽視窗：可以直接分享到 LINE、複製、或下載
+// 分享一定要由「使用者點下按鈕」當下觸發才會成功，所以截圖完先給預覽，
+// 使用者再按一次分享，手機才叫得出 LINE 的分享選單。
+// ============================================================
+let capturedBlob = null, capturedName = '派工表';
+
 async function exportNodeAsJpg(elementId, filename) {
   const node = document.getElementById(elementId);
-  if (!node || typeof html2canvas === "undefined") {
-    alert("圖片匯出功能載入中，請稍後再試一次！");
-    return;
-  }
-  let swapped = [];
+  if (!node) return;
+  if (typeof html2canvas === 'undefined') { alert('圖片功能載入中，請稍候再試一次！'); return; }
+
+  const modal = document.getElementById('imgShareModal');
+  const preview = document.getElementById('imgSharePreview');
+  capturedName = filename || '派工表';
+  document.getElementById('imgShareTitle').innerText = capturedName;
+  preview.removeAttribute('src');
+  document.getElementById('imgShareLoading').classList.remove('hidden');
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+
   try {
-    if (document.fonts && document.fonts.ready) {
-      await document.fonts.ready;
-    }
-    node.classList.add('capture-all');
-    swapped = swapFormControlsForCapture(node);
-    // 讓瀏覽器有機會完成一次重繪，確保置換後的文字節點已經上樹
-    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-    const canvas = await html2canvas(node, { backgroundColor: "#f8fafc", scale: 2, useCORS: true });
-    const link = document.createElement("a");
-    link.download = (filename || "太綺工程派工表") + ".jpg";
-    link.href = canvas.toDataURL("image/jpeg", 0.92);
-    link.click();
+    const canvas = await captureNode(node, buildCaptureCaption(elementId));
+    capturedBlob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92));
+    preview.src = URL.createObjectURL(capturedBlob);
+    document.getElementById('imgShareLoading').classList.add('hidden');
+    // 手機支援系統分享選單時才顯示「分享」，電腦版就以「複製圖片」為主
+    const canShare = !!(navigator.canShare && navigator.canShare({ files: [new File([capturedBlob], 'a.jpg', { type: 'image/jpeg' })] }));
+    document.getElementById('imgShareBtn').classList.toggle('hidden', !canShare);
+    document.getElementById('imgShareHint').innerText = canShare
+      ? '按「分享」叫出手機的分享選單，選 LINE 就能直接傳到群組。'
+      : '按「複製圖片」後，在 LINE 對話框按 Ctrl+V（Mac 是 ⌘V）即可貼上。';
   } catch (err) {
-    alert("圖片匯出失敗，請稍後再試：" + err);
+    document.getElementById('imgShareLoading').innerText = '圖片產生失敗：' + err;
   } finally {
-    restoreFormControlsAfterCapture(swapped);
-    node.classList.remove('capture-all');
+    // 保險：截圖只動複製文件，理論上畫面不會變，這裡再重畫一次確保萬無一失
+    try { renderUI(); } catch (e) { /* 重畫失敗不影響已產生的圖片 */ }
   }
+}
+
+function closeImgShare() {
+  const modal = document.getElementById('imgShareModal');
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+  const preview = document.getElementById('imgSharePreview');
+  if (preview.src) URL.revokeObjectURL(preview.src);
+  preview.removeAttribute('src');
+  capturedBlob = null;
+}
+
+async function shareCapturedImage() {
+  if (!capturedBlob) return;
+  const file = new File([capturedBlob], capturedName + '.jpg', { type: 'image/jpeg' });
+  try {
+    await navigator.share({ files: [file], title: capturedName });
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;   // 使用者自己取消，不用提示
+    alert('分享失敗，改用「下載」或「複製圖片」：' + err);
+  }
+}
+
+async function copyCapturedImage() {
+  if (!capturedBlob) return;
+  const btn = document.getElementById('imgCopyBtn');
+  const orig = btn.innerHTML;
+  try {
+    // 剪貼簿只吃 PNG，所以這裡另外轉一次
+    const bmp = await createImageBitmap(capturedBlob);
+    const c = document.createElement('canvas');
+    c.width = bmp.width; c.height = bmp.height;
+    c.getContext('2d').drawImage(bmp, 0, 0);
+    const png = await new Promise(res => c.toBlob(res, 'image/png'));
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    btn.innerHTML = '✅ 已複製';
+    setTimeout(() => { btn.innerHTML = orig; }, 2000);
+  } catch (err) {
+    alert('這個瀏覽器不支援複製圖片，請改用「下載」：' + err);
+  }
+}
+
+function downloadCapturedImage() {
+  if (!capturedBlob) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(capturedBlob);
+  a.download = capturedName + '.jpg';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
 function getAllSitesList() {
@@ -1303,7 +1466,7 @@ function renderUI() {
         </div>
       `).join('');
     } else {
-      tempWorkersHTML = `<p class="text-xs text-slate-400 italic py-0.5">今日尚無額外點工</p>`;
+      tempWorkersHTML = `<p class="text-xs text-slate-400 italic py-0.5" data-sec-empty>今日尚無額外點工</p>`;
     }
 
     const subcontractList = getSubcontractList(group.id);
@@ -1322,7 +1485,7 @@ function renderUI() {
         </div>
       `).join('');
     } else {
-      subcontractHTML = `<p class="text-xs text-slate-400 italic py-0.5">今日尚無發包人員</p>`;
+      subcontractHTML = `<p class="text-xs text-slate-400 italic py-0.5" data-sec-empty>今日尚無發包人員</p>`;
     }
 
     const isLocked = !!state.locked;
@@ -1339,7 +1502,7 @@ function renderUI() {
         </div>
         
         <div class="flex items-center space-x-1.5">
-          <button onclick="toggleGroupLock('${group.id}')" class="text-xs ${isLocked ? 'bg-red-50 hover:bg-red-100 text-red-600 border border-red-200' : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'} px-2 py-1 rounded-lg font-bold transition flex items-center" title="${isLocked ? '解除本組今日鎖定' : '鎖定本組今日排班，避免誤改'}">
+          <button onclick="toggleGroupLock('${group.id}')" class="no-capture text-xs ${isLocked ? 'bg-red-50 hover:bg-red-100 text-red-600 border border-red-200' : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'} px-2 py-1 rounded-lg font-bold transition flex items-center" title="${isLocked ? '解除本組今日鎖定' : '鎖定本組今日排班，避免誤改'}">
             <i data-lucide="${isLocked ? 'lock-open' : 'lock'}" class="w-3 h-3 mr-1"></i> ${isLocked ? '解鎖' : '鎖定本日'}
           </button>
           <span class="text-xs text-slate-400 font-medium" title="案場清單請到「人員與案場管理」調整">📍${group.sites.length}案場</span>
@@ -1370,34 +1533,34 @@ function renderUI() {
               <div class="space-y-0.5">${managerHTML}${membersHTML}${borrowedInHTML}</div>
             </div>
             <div class="card-pane ${activeTab === 'tasks' ? '' : 'hidden'}" data-pane="tasks">
-              <div class="">
+              <div class="" data-sec="tasks">
               <span class="text-xs font-bold text-slate-700 flex items-center mb-1.5">
                 <i data-lucide="clipboard-list" class="w-3.5 h-3.5 text-amber-600 mr-1"></i> 今日工作安排
-                <span class="ml-1.5 text-[11px] text-slate-400 font-normal">會一起帶進 LINE 派工文字</span>
+                <span class="ml-1.5 text-[11px] text-slate-400 font-normal no-capture">會一起帶進 LINE 派工文字</span>
               </span>
               <div class="space-y-1.5">
                 ${group.sites.map(site => {
                   const txt = ((SITE_TASKS[document.getElementById("dispatchDate").value] || {})[group.id] || {})[site] || "";
-                  return `<div class="flex flex-col sm:flex-row sm:items-start gap-1">
+                  return `<div class="flex flex-col sm:flex-row sm:items-start gap-1" data-task-row>
                     <span class="text-[11px] font-bold text-blue-700 sm:w-24 sm:pt-1.5 flex-shrink-0">📍 ${site}</span>
                     <textarea rows="1" data-task-group="${group.id}" data-task-site="${escapeAttrTk(site)}"
                       oninput="autoGrowTk(this)" onchange="updateSiteTask(this)"
                       placeholder="例：3F 配管、下午驗收、帶梯子"
                       class="task-input flex-1 text-xs border border-slate-300 rounded-lg px-2 py-1.5 bg-amber-50/40 focus:outline-none focus:ring-1 focus:ring-amber-400 resize-none">${escapeHtmlTk(txt)}</textarea>
                   </div>`;
-                }).join('') || '<p class="text-xs text-slate-400 italic">這組目前沒有案場</p>'}
+                }).join('') || '<p class="text-xs text-slate-400 italic" data-sec-empty>這組目前沒有案場</p>'}
               </div>
             </div>
 
             
             </div>
             <div class="card-pane ${activeTab === 'extras' ? '' : 'hidden'}" data-pane="extras">
-              <div class="">
+              <div class="" data-sec="temp">
               <span class="text-xs font-bold text-slate-700 flex items-center mb-1.5">
                 <i data-lucide="user-plus" class="w-3.5 h-3.5 text-purple-600 mr-1"></i> 外部點工指派
               </span>
               ${tempWorkersHTML}
-              <div class="flex flex-wrap gap-1.5 mt-1.5">
+              <div class="flex flex-wrap gap-1.5 mt-1.5 no-capture">
                 <input list="savedTempWorkersList" id="twName_${group.id}" placeholder="點工姓名" class="text-xs border border-slate-300 rounded-lg px-2 py-1.5 flex-1 min-w-[110px] focus:outline-none">
                 <datalist id="savedTempWorkersList">${SAVED_TEMP_WORKERS.map(tw => `<option value="${tw}">`).join('')}</datalist>
 
@@ -1414,13 +1577,13 @@ function renderUI() {
               </div>
             </div>
 
-            <div class="mt-3.5 pt-2.5 border-t border-dashed border-slate-200">
+            <div class="mt-3.5 pt-2.5 border-t border-dashed border-slate-200" data-sec="sub">
               <span class="text-xs font-bold text-slate-700 flex items-center mb-1.5">
                 <i data-lucide="hard-hat" class="w-3.5 h-3.5 text-cyan-600 mr-1"></i> 發包人數登記
                 ${subcontractTotal > 0 ? `<span class="ml-1.5 text-[11px] bg-cyan-50 text-cyan-700 px-1.5 py-0.5 rounded-full font-black">共 ${subcontractTotal} 人</span>` : ''}
               </span>
               ${subcontractHTML}
-              <div class="flex flex-wrap gap-1.5 mt-1.5">
+              <div class="flex flex-wrap gap-1.5 mt-1.5 no-capture">
                 <input type="text" id="scVendor_${group.id}" placeholder="發包廠商名稱" class="text-xs border border-slate-300 rounded-lg px-2 py-1.5 flex-1 min-w-[100px] focus:outline-none">
                 <input type="text" id="scItem_${group.id}" placeholder="工項(手動輸入)" class="text-xs border border-slate-300 rounded-lg px-2 py-1.5 flex-1 min-w-[100px] focus:outline-none">
                 <select id="scSite_${group.id}" class="text-xs border border-slate-300 rounded-lg px-2 py-1.5 bg-white text-blue-700 font-medium">
@@ -1435,12 +1598,12 @@ function renderUI() {
           </div>
         </div>
 
-        <div class="mt-4 pt-2.5 border-t border-slate-100 flex gap-2">
+        <div class="mt-4 pt-2.5 border-t border-slate-100 flex gap-2 no-capture">
           <button onclick="saveGroupData('${group.id}')" class="bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2 px-2 rounded-lg flex items-center justify-center shadow transition" id="saveBtn_${group.id}">
             <i data-lucide="cloud-upload" class="w-3.5 h-3.5 mr-1 text-blue-400"></i> 儲存
           </button>
-          <button onclick="exportNodeAsJpg('groupCard_${group.id}', '${group.name}_派工表_' + document.getElementById('dispatchDate').value)" class="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-bold py-2 px-2 rounded-lg flex items-center justify-center shadow-sm transition" title="單獨下載本組派工卡片圖片">
-            <i data-lucide="image-down" class="w-3.5 h-3.5 mr-1 text-blue-600"></i> 存圖
+          <button onclick="exportNodeAsJpg('groupCard_${group.id}', '${group.name}_派工表_' + document.getElementById('dispatchDate').value)" class="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-bold py-2 px-2 rounded-lg flex items-center justify-center shadow-sm transition" title="產生本組派工卡片圖片，可直接分享到 LINE">
+            <i data-lucide="image-down" class="w-3.5 h-3.5 mr-1 text-blue-600"></i> 傳圖
           </button>
           <button onclick="generateLineMessage('${group.id}')" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 px-3 rounded-lg flex items-center justify-center shadow transition">
             <i data-lucide="message-square" class="w-3.5 h-3.5 mr-1.5"></i> 產出【${group.name}】LINE 派工文字

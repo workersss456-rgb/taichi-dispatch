@@ -99,7 +99,13 @@
     .ctl { flex:1 1 45%; }
     .gantt-wrap { max-height:calc(100vh - 300px); }
   }
-  .capture .gantt-wrap { max-height:none; overflow:visible; }
+  /* 截圖專用：只作用在 html2canvas 的複製文件裡 */
+  /* .gantt 平常是 min-width:100% 撐滿畫面，截圖時改成只取內容寬度，右邊才不會留一大片空白 */
+  .capture { width:max-content !important; min-width:0 !important; background:#fff; padding:14px 16px 16px; }
+  .capture .g-head, .capture .g-label, .capture .g-label-head { position:static !important; }
+  .capture .add { display:none !important; }
+  .cap-title { font-size:15px; font-weight:700; color:var(--navy); margin-bottom:2px; }
+  .cap-sub { font-size:11.5px; color:var(--sub); margin-bottom:10px; }
 </style>
 </head>
 <body>
@@ -129,13 +135,15 @@
     <div class="ctl">
       <label>格寬</label>
       <select id="zoom">
+        <option value="auto" selected>自動填滿寬度</option>
         <option value="12">窄（看長期）</option>
-        <option value="18" selected>標準</option>
+        <option value="18">標準</option>
         <option value="28">寬（看細節）</option>
       </select>
     </div>
     <div class="spacer"></div>
-    <button class="btn btn-ghost" id="export-btn">另存圖片</button>
+    <button class="btn btn-ghost" id="text-btn">💬 LINE 文字</button>
+    <button class="btn btn-ghost" id="export-btn">📤 傳送圖片</button>
     <button class="btn btn-primary" id="add-btn">＋ 新增工項</button>
   </div>
 
@@ -143,6 +151,43 @@
   <div class="gantt-wrap" id="gantt-wrap"><div class="gantt" id="gantt"></div></div>
   <div class="legend" id="legend"></div>
 </main>
+
+<!-- 圖片預覽 / 分享 -->
+<div class="modal-bg" id="text-modal">
+  <div class="modal" style="max-width:560px; padding:0;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:14px 16px; border-bottom:1px solid var(--border);">
+      <b style="font-size:14px;">LINE 進度文字</b>
+      <button onclick="document.getElementById('text-modal').classList.remove('show')" style="border:none; background:none; font-size:18px; color:var(--faint); cursor:pointer;">✕</button>
+    </div>
+    <div style="padding:12px 16px;">
+      <textarea id="text-output" rows="14" readonly style="width:100%; font-size:13px; line-height:1.6; font-family:inherit; background:#f8fafc;"></textarea>
+    </div>
+    <div style="font-size:11.5px; color:var(--sub); padding:0 16px;">按「複製文字」後貼到 LINE 群組即可；文字比圖片更好讀，手機也不用放大。</div>
+    <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:8px; padding:12px 16px 16px;">
+      <button class="btn btn-primary" id="text-copy" style="background:#059669;">📋 複製文字</button>
+      <button class="btn btn-ghost" id="text-share" style="display:none;">📤 分享</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="img-modal">
+  <div class="modal" style="max-width:560px; padding:0;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:14px 16px; border-bottom:1px solid var(--border);">
+      <b style="font-size:14px;" id="img-title"></b>
+      <button onclick="closeImgModal()" style="border:none; background:none; font-size:18px; color:var(--faint); cursor:pointer;">✕</button>
+    </div>
+    <div style="background:#f1f5f9; padding:12px; max-height:56vh; overflow:auto;">
+      <div id="img-loading" style="text-align:center; color:var(--sub); font-size:13px; padding:30px 0;">圖片產生中，請稍候…</div>
+      <img id="img-preview" style="width:100%; border-radius:8px; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.12);" alt="甘特圖預覽">
+    </div>
+    <div style="font-size:11.5px; color:var(--sub); padding:8px 16px 0;" id="img-hint"></div>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:12px 16px 16px;">
+      <button class="btn btn-primary" id="img-share" style="background:#059669; display:none;">📤 分享</button>
+      <button class="btn btn-primary" id="img-copy">📋 複製圖片</button>
+      <button class="btn btn-ghost" id="img-download">⬇️ 下載</button>
+    </div>
+  </div>
+</div>
 
 <!-- 工項表單 -->
 <div class="modal-bg" id="task-modal">
@@ -225,8 +270,13 @@ document.querySelectorAll('[data-range]').forEach(b => b.addEventListener('click
   if (dayDiff(f.value, t.value) > 180) { t.value = addDays(f.value, 180); toast('區間最多 180 天'); }
   saveView(); load();
 }));
-document.getElementById('zoom').addEventListener('change', e => {
-  document.documentElement.style.setProperty('--slot', e.target.value + 'px'); saveView(); render();
+document.getElementById('zoom').addEventListener('change', () => { saveView(); render(); });
+// 自動填滿模式下，畫面寬度改變（轉向、縮放視窗）要重算格寬
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  if (document.getElementById('zoom').value !== 'auto') return;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(render, 200);
 });
 document.getElementById('site-select').addEventListener('change', () => { saveView(); load(); });
 
@@ -268,10 +318,21 @@ function groupColor(groupId) {
 }
 
 // ---------- 畫圖 ----------
+// 「自動填滿寬度」時，依可用寬度與天數反推每半天要多寬，避免右邊留一大片空白
+function currentSlot(days) {
+  const v = document.getElementById('zoom').value;
+  if (v !== 'auto') return parseInt(v, 10);
+  const wrap = document.getElementById('gantt-wrap');
+  const labelW = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--label'), 10) || 190;
+  const avail = (wrap.clientWidth || 900) - labelW - 6;
+  return Math.max(10, Math.min(46, Math.floor(avail / (days * 2))));
+}
+
 function render() {
   const from = document.getElementById('from').value, to = document.getElementById('to').value;
   const days = dayDiff(from, to) + 1;
-  const slot = parseInt(document.getElementById('zoom').value, 10);
+  const slot = currentSlot(days);
+  document.documentElement.style.setProperty('--slot', slot + 'px');
   const width = days * 2 * slot;
   const today = todayStr();
   const siteFilter = document.getElementById('site-select').value;
@@ -442,18 +503,143 @@ document.getElementById('tm-delete').addEventListener('click', async () => {
   catch (err) { toast(err.message, 'err'); }
 });
 
-// ---------- 存圖 ----------
+// ---------- 產出 LINE 文字：傳群組最可靠的方式（圖片在手機上常常被壓縮看不清楚） ----------
+function buildGanttText() {
+  const site = document.getElementById('site-select').value;
+  const from = document.getElementById('from').value, to = document.getElementById('to').value;
+  const md = d => d.slice(5).replace('-', '/');
+
+  const shown = site ? state.sites.filter(x => x.name === site)
+    : state.sites.filter(x => state.tasks.some(t => t.site === x.name));
+  let out = `【案場工程進度】${site || '全部案場'}\n`;
+  out += `期間：${md(from)} ~ ${md(to)}（半天為單位）\n`;
+  out += '━━━━━━━━━━━━━━\n';
+
+  if (!shown.length) return out + '這段期間沒有排定工項。';
+
+  shown.forEach(s => {
+    const list = state.tasks.filter(t => t.site === s.name);
+    out += `\n📍【${s.name}】${s.group_name ? '（' + s.group_name + '）' : ''}\n`;
+    if (!list.length) { out += '　（這段期間無工項）\n'; return; }
+    list.forEach(t => {
+      const e = endOf(t.start_date, t.start_half, t.duration_halves);
+      out += `　▫ ${t.name}\n`;
+      out += `　　${md(t.start_date)} ${halfText(t.start_half)} ~ ${md(e.date)} ${halfText(e.half)}（${fmtDays(t.duration_halves)}）`;
+      out += t.progress ? `　進度 ${t.progress}%\n` : '\n';
+      if (t.note) out += `　　備註：${t.note}\n`;
+    });
+  });
+  out += `\n（產出時間 ${new Date().toLocaleString('zh-TW', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}）`;
+  return out;
+}
+
+document.getElementById('text-btn').addEventListener('click', () => {
+  document.getElementById('text-output').value = buildGanttText();
+  document.getElementById('text-share').style.display = navigator.share ? '' : 'none';
+  document.getElementById('text-modal').classList.add('show');
+});
+
+document.getElementById('text-copy').addEventListener('click', async () => {
+  const ta = document.getElementById('text-output');
+  try {
+    await navigator.clipboard.writeText(ta.value);
+    toast('已複製，可直接貼到 LINE 群組', 'ok');
+  } catch (err) {
+    // 舊版瀏覽器或未授權剪貼簿時，改用選取的方式讓使用者自己複製
+    ta.removeAttribute('readonly'); ta.select(); ta.setSelectionRange(0, 99999);
+    try { document.execCommand('copy'); toast('已複製，可直接貼到 LINE 群組', 'ok'); }
+    catch (e) { toast('請長按文字框全選後複製', 'err'); }
+    ta.setAttribute('readonly', '');
+  }
+});
+
+document.getElementById('text-share').addEventListener('click', async () => {
+  try { await navigator.share({ text: document.getElementById('text-output').value }); }
+  catch (err) { if (!err || err.name !== 'AbortError') toast('分享失敗，請改用複製', 'err'); }
+});
+
+document.getElementById('text-modal').addEventListener('click', e => { if (e.target.id === 'text-modal') e.target.classList.remove('show'); });
+
+// ---------- 產圖：預覽後可分享到 LINE、複製或下載 ----------
+let capturedBlob = null, capturedName = '甘特圖';
+
 document.getElementById('export-btn').addEventListener('click', async () => {
   if (typeof html2canvas === 'undefined') return toast('圖片功能載入中，請稍後再試');
-  document.body.classList.add('capture');
+  const site = document.getElementById('site-select').value || '全部案場';
+  const from = document.getElementById('from').value, to = document.getElementById('to').value;
+  capturedName = `甘特圖_${site}_${from}_${to}`;
+
+  const modal = document.getElementById('img-modal');
+  const preview = document.getElementById('img-preview');
+  document.getElementById('img-title').textContent = `${site}　${from} ~ ${to}`;
+  preview.removeAttribute('src');
+  document.getElementById('img-loading').style.display = '';
+  modal.classList.add('show');
+
   try {
-    const canvas = await html2canvas(document.getElementById('gantt'), { backgroundColor: '#ffffff', scale: 2 });
-    const a = document.createElement('a');
-    const site = document.getElementById('site-select').value || '全部案場';
-    a.download = `甘特圖_${site}_${document.getElementById('from').value}_${document.getElementById('to').value}.jpg`;
-    a.href = canvas.toDataURL('image/jpeg', 0.92); a.click();
-  } catch (err) { toast('匯出失敗：' + err.message, 'err'); }
-  document.body.classList.remove('capture');
+    const canvas = await html2canvas(document.getElementById('gantt'), {
+      backgroundColor: '#ffffff', scale: 2,
+      // 只動複製文件：改成內容寬度、解除 sticky、加上標題，畫面本身不受影響
+      onclone: (doc, el) => {
+        el.classList.add('capture');
+        const cap = doc.createElement('div');
+        cap.innerHTML = `<div class="cap-title">📍 ${esc(site)}　工程進度表</div>
+          <div class="cap-sub">${from} ~ ${to}　｜　半天為一格　｜　產出時間 ${new Date().toLocaleString('zh-TW', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>`;
+        el.insertBefore(cap, el.firstChild);
+      },
+    });
+    capturedBlob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92));
+    preview.src = URL.createObjectURL(capturedBlob);
+    document.getElementById('img-loading').style.display = 'none';
+    const canShare = !!(navigator.canShare && navigator.canShare({ files: [new File([capturedBlob], 'a.jpg', { type: 'image/jpeg' })] }));
+    document.getElementById('img-share').style.display = canShare ? '' : 'none';
+    document.getElementById('img-hint').textContent = canShare
+      ? '按「分享」叫出手機的分享選單，選 LINE 就能直接傳到群組。'
+      : '按「複製圖片」後，在 LINE 對話框按 Ctrl+V（Mac 是 ⌘V）即可貼上。';
+  } catch (err) {
+    document.getElementById('img-loading').textContent = '圖片產生失敗：' + err.message;
+  }
+});
+
+function closeImgModal() {
+  const p = document.getElementById('img-preview');
+  if (p.src) URL.revokeObjectURL(p.src);
+  p.removeAttribute('src');
+  document.getElementById('img-modal').classList.remove('show');
+  capturedBlob = null;
+}
+
+document.getElementById('img-share').addEventListener('click', async () => {
+  if (!capturedBlob) return;
+  try {
+    await navigator.share({ files: [new File([capturedBlob], capturedName + '.jpg', { type: 'image/jpeg' })], title: capturedName });
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;
+    toast('分享失敗，請改用複製或下載', 'err');
+  }
+});
+
+document.getElementById('img-copy').addEventListener('click', async () => {
+  if (!capturedBlob) return;
+  try {
+    // 剪貼簿只吃 PNG，這裡另外轉一次
+    const bmp = await createImageBitmap(capturedBlob);
+    const c = document.createElement('canvas');
+    c.width = bmp.width; c.height = bmp.height;
+    c.getContext('2d').drawImage(bmp, 0, 0);
+    const png = await new Promise(res => c.toBlob(res, 'image/png'));
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    toast('已複製圖片，可直接貼到 LINE', 'ok');
+  } catch (err) { toast('這個瀏覽器不支援複製圖片，請改用下載', 'err'); }
+});
+
+document.getElementById('img-download').addEventListener('click', () => {
+  if (!capturedBlob) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(capturedBlob);
+  a.download = capturedName + '.jpg';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 });
 
 // ---------- 登入與啟動 ----------
@@ -481,13 +667,12 @@ function updateNote() {
   if (v && v.from && v.to) {
     document.getElementById('from').value = v.from;
     document.getElementById('to').value = v.to;
-    document.getElementById('zoom').value = v.zoom || '18';
+    document.getElementById('zoom').value = v.zoom || 'auto';
   } else {
     const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
     document.getElementById('from').value = ymd(d);
     document.getElementById('to').value = addDays(ymd(d), 13);
   }
-  document.documentElement.style.setProperty('--slot', document.getElementById('zoom').value + 'px');
   updateNote();
   load().then(() => { if (v && v.site) { document.getElementById('site-select').value = v.site; load(); } });
 })();
